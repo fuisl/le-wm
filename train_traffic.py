@@ -29,6 +29,11 @@ def lejepa_forward(self, batch, stage, cfg):
     n_preds = cfg.num_preds
     lambd = cfg.loss.sigreg.weight
 
+    if cfg.get("zero_action", False):
+        # M3.5 ablation control: the predictor can never see the action, so any
+        # gap vs. the real model is exactly what the action pathway buys.
+        batch = {**batch, "action": torch.zeros_like(batch["action"])}
+
     output = self.model.encode(batch)
 
     emb = output["emb"]  # (B, T, D)
