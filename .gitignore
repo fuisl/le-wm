@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+outputs/
+wandb/
+traffic_data/
+traffic_runs/

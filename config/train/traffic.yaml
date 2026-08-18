@@ -1,0 +1,43 @@
+defaults:
+  - _self_
+  - launcher: local
+  - model: traffic
+
+output_model_name: traffic-lewm
+subdir: dev0
+
+data:
+  train_path: traffic_data/train.pt
+  val_path: traffic_data/val.pt
+
+num_workers: 2
+seed: 3072
+embed_dim: 64
+history_size: 3
+
+trainer:
+  max_epochs: 60
+  devices: auto
+  accelerator: gpu
+  precision: 32-true
+  gradient_clip_val: 1.0
+
+loader:
+  batch_size: 128
+  num_workers: ${num_workers}
+  persistent_workers: False
+  pin_memory: True
+
+optimizer:
+  type: AdamW
+  lr: 3e-4
+  weight_decay: 1e-3
+
+num_preds: 1
+
+loss:
+  sigreg:
+    weight: 0.09
+    kwargs:
+      knots: 17
+      num_proj: 1024

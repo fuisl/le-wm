@@ -1,0 +1,44 @@
+_target_: jepa.JEPA
+
+encoder:
+  _target_: module.Embedder
+  input_dim: ???       # set at runtime from the dataset's state_dim
+  smoothed_dim: ${embed_dim}
+  emb_dim: ${embed_dim}
+
+predictor:
+  _target_: module.ARPredictor
+  num_frames: ${history_size}
+  input_dim: ${embed_dim}
+  hidden_dim: ${embed_dim}
+  output_dim: ${embed_dim}
+  depth: 4
+  heads: 4
+  mlp_dim: 256
+  dim_head: 32
+  dropout: 0.1
+  emb_dropout: 0.0
+
+action_encoder:
+  _target_: module.Embedder
+  input_dim: ???       # set at runtime from the dataset's action_dim
+  smoothed_dim: ${embed_dim}
+  emb_dim: ${embed_dim}
+
+projector:
+  _target_: module.MLP
+  input_dim: ${embed_dim}
+  output_dim: ${embed_dim}
+  hidden_dim: 256
+  norm_fn:
+    _target_: torch.nn.BatchNorm1d
+    _partial_: true
+
+pred_proj:
+  _target_: module.MLP
+  input_dim: ${embed_dim}
+  output_dim: ${embed_dim}
+  hidden_dim: 256
+  norm_fn:
+    _target_: torch.nn.BatchNorm1d
+    _partial_: true
