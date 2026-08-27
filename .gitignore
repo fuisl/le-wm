@@ -6,3 +6,5 @@ traffic_data/
 traffic_data_sumo/
 traffic_runs/
 _oracle_cem_snapshot.xml
+traffic_data_cologne8/
+traffic_runs_sumo/

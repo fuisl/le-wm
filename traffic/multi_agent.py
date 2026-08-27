@@ -29,18 +29,22 @@ from jepa import JEPA
 
 
 def masked_neighbor_mean(x, neighbor_idx, neighbor_mask):
-    """Mean-pool x over each node's actual neighbors (not zero-padded / 4).
+    """Mean-pool x over each node's actual neighbors (not zero-padded / deg).
 
     x: (B, N, T, D)
-    neighbor_idx: (N, 4) int64, -1 where no neighbor exists
-    neighbor_mask: (N, 4) bool, True where that slot is a real neighbor
+    neighbor_idx: (N, deg) int64, -1 where no neighbor exists
+    neighbor_mask: (N, deg) bool, True where that slot is a real neighbor
     returns: (B, N, T, D) - pooled[b, i, t] = mean_{j in neighbors(i)} x[b, j, t]
     Isolated nodes (no neighbors at all) pool to zero.
+
+    `deg` is read from neighbor_idx.shape[1] - 4 for the CTM compass grid, but
+    arbitrary for a real network (cologne8: up to 6). Same code path either way.
     """
     B, N, T, D = x.shape
+    deg = neighbor_idx.shape[1]
     safe_idx = neighbor_idx.clamp(min=0)  # -1 -> 0, masked out below; avoids gather OOB
-    gathered = x[:, safe_idx]  # (B, N, 4, T, D)
-    mask = neighbor_mask.to(x.dtype).view(1, N, 4, 1, 1)
+    gathered = x[:, safe_idx]  # (B, N, deg, T, D)
+    mask = neighbor_mask.to(x.dtype).view(1, N, deg, 1, 1)
     summed = (gathered * mask).sum(dim=2)  # (B, N, T, D)
     degree = mask.sum(dim=2).clamp(min=1.0)  # (1, N, 1, 1), avoid /0 for isolated nodes
     return summed / degree
