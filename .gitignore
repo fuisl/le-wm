@@ -8,3 +8,6 @@ traffic_runs/
 _oracle_cem_snapshot.xml
 traffic_data_cologne8/
 traffic_runs_sumo/
+wandb/
+_oracle_multi_snap.xml
+_tripinfo_*.xml

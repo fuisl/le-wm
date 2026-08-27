@@ -128,6 +128,7 @@ def main():
     p.add_argument("--weight_decay", type=float, default=1e-3)
     p.add_argument("--seed", type=int, default=3072)
     p.add_argument("--save_every", type=int, default=40)
+    p.add_argument("--wandb", action="store_true")
     args = p.parse_args()
 
     torch.manual_seed(args.seed); np.random.seed(args.seed)
@@ -149,10 +150,19 @@ def main():
     print(f"train windows {len(tr_set)}  val windows {len(va_set)}")
 
     model = build_model(node_F, node_A, args.level, args.permute_control, args.neighbor_agg).to(device)
-    print(f"params {sum(x.numel() for x in model.parameters())/1e3:.0f}K")
+    n_params = sum(x.numel() for x in model.parameters())
+    print(f"params {n_params/1e3:.0f}K")
     sigreg = SIGReg(knots=17, num_proj=1024).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
+
+    import wandb_utils
+    wb = wandb_utils.init(args.wandb, project="cair-traffic-cologne8", name=f"train-{args.tag}",
+                          config={"tag": args.tag, "level": args.level, "neighbor_agg": args.neighbor_agg,
+                                  "permute_control": args.permute_control, "rollout_k": K,
+                                  "epochs": args.epochs, "lr": args.lr, "batch_size": args.batch_size,
+                                  "params": n_params, "embed_dim": EMBED_DIM, "history": HISTORY},
+                          group="train")
 
     run_dir = Path("traffic_runs_sumo", args.tag)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -172,16 +182,28 @@ def main():
             for b in va:
                 loss, tf, rl, sl = ar_forward(model, sigreg, b, n_nodes, ni, nm, device, K)
                 vacc.append((loss.item(), tf, rl, sl))
+            # latent health: per-dim std on a val batch
+            b0 = next(iter(va))
+            info = {"state": b0["state"].to(device), "action": b0["action"].to(device), "n_nodes": n_nodes}
+            if model.level == "0.5":
+                info["neighbor_idx"] = ni.to(device); info["neighbor_mask"] = nm.to(device)
+            zstd = model.encode(info)["emb"].reshape(-1, EMBED_DIM).std(0).mean().item()
         acc, vacc = np.array(acc), np.array(vacc)
+        wb.log({"epoch": ep, "lr": sched.get_last_lr()[0], "z_std": zstd,
+                "train/loss": acc[:, 0].mean(), "train/tf_loss": acc[:, 1].mean(),
+                "train/roll_loss": acc[:, 2].mean(), "train/sigreg": acc[:, 3].mean(),
+                "val/loss": vacc[:, 0].mean(), "val/tf_loss": vacc[:, 1].mean(),
+                "val/roll_loss": vacc[:, 2].mean(), "epoch_s": time.time() - t0})
         if ep == 1 or ep % 10 == 0 or ep == args.epochs:
             print(f"ep {ep:>3} | train {acc[:,0].mean():.4f} (tf {acc[:,1].mean():.4f} roll {acc[:,2].mean():.4f}) "
-                  f"| val (tf {vacc[:,1].mean():.4f} roll {vacc[:,2].mean():.4f}) | {time.time()-t0:.1f}s")
+                  f"| val (tf {vacc[:,1].mean():.4f} roll {vacc[:,2].mean():.4f}) | z-std {zstd:.3f} | {time.time()-t0:.1f}s")
         if ep % args.save_every == 0 or ep == args.epochs:
             torch.save({"model_state": model.state_dict(),
                         "cfg": {"node_F": node_F, "node_A": node_A, "level": args.level,
                                 "permute_control": args.permute_control, "embed_dim": EMBED_DIM,
                                 "history": HISTORY, "rollout_k": K, "neighbor_agg": args.neighbor_agg},
                         "epoch": ep}, run_dir / f"weights_epoch_{ep}.pt")
+    wb.finish()
     print(f"done -> {run_dir}")
 
 

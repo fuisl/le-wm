@@ -71,7 +71,8 @@ def _discover_green_phases(tl_id):
 
 
 class SumoMultiEnv:
-    def __init__(self, sumocfg_path, begin=25200, seed=0, warmup=10, step_length=STEP_LENGTH):
+    def __init__(self, sumocfg_path, begin=25200, seed=0, warmup=10,
+                 step_length=STEP_LENGTH, metrics=False, tripinfo_dir="/tmp/claude-1000"):
         self.sumocfg_path = os.path.abspath(sumocfg_path)
         self.scenario_dir = os.path.dirname(self.sumocfg_path)
         self.begin = begin
@@ -79,6 +80,11 @@ class SumoMultiEnv:
         self.warmup = warmup
         self.step_length = step_length
         self.rng = np.random.default_rng(seed)
+
+        self.metrics_on = metrics
+        self._tripinfo_path = os.path.join(tripinfo_dir, f"_tripinfo_{os.getpid()}_{seed}.xml")
+        self._q_accum = 0.0
+        self._q_n = 0
 
         self._started = False
         self.tl_ids = []
@@ -169,11 +175,18 @@ class SumoMultiEnv:
             "--time-to-teleport", "-1",
             "--seed", str(self.seed),
         ]
+        if self.metrics_on:
+            args += [
+                "--tripinfo-output", self._tripinfo_path,
+                "--tripinfo-output.write-unfinished", "true",  # count vehicles still en route at end
+                "--duration-log.statistics", "true",
+            ]
         traci.start(args)
         self._started = True
 
     def reset(self):
         self._start()
+        self._q_accum, self._q_n = 0.0, 0
         self.green_phases, self.yellow, self.controlled_lanes = {}, {}, {}
         self.current_phase, self.elapsed = {}, {}
         for tid in self.tl_ids:
@@ -194,6 +207,45 @@ class SumoMultiEnv:
         if self._started:
             traci.close()
             self._started = False
+
+    # -- RESCO-style episode metrics -------------------------------------
+
+    def metrics_tick(self):
+        """Call once per control decision: accumulate instantaneous network
+        queue (total halting vehicles on all controlled lanes)."""
+        q = 0
+        for tid in self.tl_ids:
+            for lane in set(self.controlled_lanes[tid]):
+                q += traci.lane.getLastStepHaltingNumber(lane)
+        self._q_accum += q
+        self._q_n += 1
+
+    def episode_metrics(self):
+        """Mean over all trips (finished + unfinished at episode end), matching
+        RESCO's evaluation table:
+          duration - trip travel time (s)          <- tripinfo `duration`
+          delay    - time lost vs free-flow (s)    <- tripinfo `timeLoss`
+          wait     - accumulated waiting time (s)  <- tripinfo `waitingTime`
+          queue    - mean network halting vehicles per control step
+          throughput - number of trips seen
+        """
+        import xml.etree.ElementTree as ET
+        d = w = tl = 0.0
+        n = 0
+        try:
+            for tr in ET.parse(self._tripinfo_path).getroot().findall("tripinfo"):
+                d += float(tr.get("duration", 0.0))
+                w += float(tr.get("waitingTime", 0.0))
+                tl += float(tr.get("timeLoss", 0.0))
+                n += 1
+        except (FileNotFoundError, ET.ParseError):
+            pass
+        q = self._q_accum / self._q_n if self._q_n else float("nan")
+        if n == 0:
+            return {"duration": float("nan"), "delay": float("nan"),
+                    "wait": float("nan"), "queue": q, "throughput": 0}
+        return {"duration": d / n, "delay": tl / n, "wait": w / n,
+                "queue": q, "throughput": n}
 
     # -- shapes ----------------------------------------------------------
 

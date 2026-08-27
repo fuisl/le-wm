@@ -187,11 +187,14 @@ def run_episode(env, n_compare, warmup, decision_fn):
         wall.append(time.time() - t0)
         actions.append(env.encode_action(np.clip(ph, 0, env.P_max - 1)))
         s = env.step(ph)
+        env.metrics_tick()
         states.append(s)
         step_halt = float(s.reshape(env.n_nodes(), env.node_feature_dim())[:, :env.P_max].sum())
         tail += step_halt
         trace.append(step_halt)
-    return tail, (float(np.mean(wall)) if wall else 0.0), trace
+    env.close()                       # flushes --tripinfo-output; parse AFTER this
+    m = env.episode_metrics()
+    return tail, (float(np.mean(wall)) if wall else 0.0), trace, m
 
 
 def main():
@@ -209,6 +212,7 @@ def main():
     ap.add_argument("--fixed_cycle", type=int, default=6)
     ap.add_argument("--oracle", action="store_true", help="add oracle-CEM (real-SUMO cost) - slow, 1 seed recommended")
     ap.add_argument("--dump_traces", action="store_true")
+    ap.add_argument("--wandb", action="store_true", help="log RESCO metrics to wandb (offline if no creds)")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -259,22 +263,32 @@ def main():
             return cache["p"](t)
         return d
 
-    rows = []
-    for seed in args.seeds:
-        env = SumoMultiEnv(SUMOCFG, seed=seed, warmup=0)
-        res = {}
-        def make_oracle_decision(seed):
-            oc = OracleFactoredCEM(n_nodes, P_max, args.horizon, 24, 6, 3,
-                                   rng=np.random.default_rng(seed))
-            cache = {"queue": []}
-            def decision(env, t, states, actions):
-                if cache["queue"]:
-                    return cache["queue"].pop(0)
-                plan = oc.plan_env(env, "_oracle_multi_snap.xml", args.act_steps)
-                cache["queue"] = [plan[k] for k in range(1, len(plan))]
-                return plan[0]
-            return decision
+    import wandb_utils
+    wb = wandb_utils.init(args.wandb, project="cair-traffic-cologne8",
+                          name=f"control-{args.run}",
+                          config={"model": args.run, "weights": args.weights,
+                                  "horizon": args.horizon, "act_steps": args.act_steps,
+                                  "num_samples": args.num_samples, "n_iters": args.n_iters,
+                                  "n_compare": args.n_compare, "seeds": args.seeds,
+                                  "probe_mse": pr["mse"], **{f"cfg/{k}": v for k, v in cfg.items()}},
+                          group="closed-loop-control")
 
+    def make_oracle_decision(seed):
+        oc = OracleFactoredCEM(n_nodes, P_max, args.horizon, 24, 6, 3,
+                               rng=np.random.default_rng(seed))
+        cache = {"queue": []}
+        def decision(env, t, states, actions):
+            if cache["queue"]:
+                return cache["queue"].pop(0)
+            plan = oc.plan_env(env, "_oracle_multi_snap.xml", args.act_steps)
+            cache["queue"] = [plan[k] for k in range(1, len(plan))]
+            return plan[0]
+        return decision
+
+    rows = []            # (seed, {name: tail_halting})
+    metric_rows = []     # (seed, {name: resco_metrics_dict})
+    for seed in args.seeds:
+        res, mres, traces = {}, {}, {}
         pairs = [
             ("latent-CEM", make_cem_decision(seed)),
             ("max_pressure", mp_decision_factory()),
@@ -282,23 +296,25 @@ def main():
         ]
         if args.oracle:
             pairs.append(("oracle-CEM", make_oracle_decision(seed)))
-        traces = {}
         for name, dfn in pairs:
-            env2 = SumoMultiEnv(SUMOCFG, seed=seed, warmup=0)
-            tail, wall, tr = run_episode(env2, args.n_compare, args.warmup, dfn)
-            env2.close()
-            res[name] = tail
-            traces[name] = tr
-            print(f"  seed {seed:>4}  {name:>14}: tail halting {tail:>9.0f}"
-                  + (f"   ({wall*1000:.0f} ms/decision)" if wall > 1e-4 else ""))
-        rows.append((seed, res))
+            env2 = SumoMultiEnv(SUMOCFG, seed=seed, warmup=0, metrics=True)
+            tail, wall, tr, m = run_episode(env2, args.n_compare, args.warmup, dfn)  # closes env2 itself
+            res[name], mres[name], traces[name] = tail, m, tr
+            print(f"  seed {seed:>4}  {name:>14}:  dur {m['duration']:7.1f}  delay {m['delay']:7.1f}  "
+                  f"wait {m['wait']:7.1f}  queue {m['queue']:6.1f}  thru {m['throughput']:>4}"
+                  + (f"   ({wall*1000:.0f} ms/dec)" if wall > 1e-4 else ""))
+            wb.log({f"{name}/duration": m["duration"], f"{name}/delay": m["delay"],
+                    f"{name}/wait": m["wait"], f"{name}/queue": m["queue"],
+                    f"{name}/throughput": m["throughput"], f"{name}/tail_halting": tail,
+                    "seed": seed})
+        rows.append((seed, res)); metric_rows.append((seed, mres))
         if args.dump_traces and seed == args.seeds[0]:
             import json
             json.dump({"seed": seed, "warmup": args.warmup, "n_compare": args.n_compare,
-                       "step_s": 5, "model": args.run, "tails": res, "traces": traces},
+                       "step_s": 5, "model": args.run, "tails": res, "traces": traces,
+                       "metrics": mres},
                       open(f"{DATA_DIR}/control_traces.json", "w"))
             print(f"  wrote {DATA_DIR}/control_traces.json")
-        env.close()
 
     print("\n=== summary (tail cumulative halting, lower = better) ===")
     has_oracle = "oracle-CEM" in rows[0][1]
@@ -318,6 +334,21 @@ def main():
         omr = np.mean([r['oracle-CEM'] / r['max_pressure'] for _, r in rows])
         print(f"mean oracle-CEM / max_pressure = {omr:.2f}  "
               f"-> gap is {'MODEL/PROBE error' if omr < mean_ratio * 0.9 else 'the CEM search / cost design'}")
+
+    # RESCO-style metric table (mean over seeds), the numbers a RESCO eval reports
+    print("\n=== RESCO metrics (mean over seeds; lower = better except throughput) ===")
+    names = [n for n, _ in metric_rows[0][1].items()]
+    print(f"{'controller':>14} {'duration':>10} {'delay':>9} {'wait':>9} {'queue':>8} {'throughput':>11}")
+    summary = {}
+    for name in names:
+        agg = {k: float(np.nanmean([mr[name][k] for _, mr in metric_rows]))
+               for k in ("duration", "delay", "wait", "queue", "throughput")}
+        summary[name] = agg
+        print(f"{name:>14} {agg['duration']:>10.1f} {agg['delay']:>9.1f} {agg['wait']:>9.1f} "
+              f"{agg['queue']:>8.1f} {agg['throughput']:>11.0f}")
+        for k, v in agg.items():
+            wb.log({f"mean/{name}/{k}": v})
+    wb.finish()
 
 
 if __name__ == "__main__":
