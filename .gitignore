@@ -12,3 +12,5 @@ wandb/
 _oracle_multi_snap.xml
 _tripinfo_*.xml
 traffic_data_ingolstadt21/
+traffic_data_cologne8_v2/
+traffic_data_c8_smoke/

@@ -32,7 +32,10 @@ class TrafficDataset(Dataset):
         ei, start = self.index[idx]
         ep = self.episodes[ei]
         end = start + self.window
-        return {
+        item = {
             "state": torch.from_numpy(ep["state"][start:end]),
             "action": torch.from_numpy(ep["action"][start:end]),
         }
+        if "edge_feat" in ep:
+            item["edge_feat"] = torch.from_numpy(ep["edge_feat"][start:end])
+        return item

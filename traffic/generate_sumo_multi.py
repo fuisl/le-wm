@@ -25,7 +25,16 @@ from traffic.sumo_multi_env import (
     controller_random,
 )
 
-CONTROLLERS = ["fixed_time", "random", "max_pressure"]
+# random_joint: every signal picks an independent uniform phase EVERY step - this
+# is exactly the distribution a factored CEM planner samples at iteration 0, so it
+# is the action coverage the 2026-08-27 closed-loop failure (Addendum 4) needs.
+CONTROLLERS = ["fixed_time", "random", "max_pressure", "random_joint"]
+
+
+def controller_random_joint(env, rng):
+    def policy(step):
+        return np.array([int(rng.integers(0, len(env.green_phases[t]))) for t in env.tl_ids])
+    return policy
 
 
 def build_policy(env, name, rng):
@@ -35,6 +44,8 @@ def build_policy(env, name, rng):
         return controller_random(env, rng, switch_prob=float(rng.uniform(0.15, 0.4)))
     if name == "max_pressure":
         return controller_max_pressure(env)
+    if name == "random_joint":
+        return controller_random_joint(env, rng)
     raise ValueError(name)
 
 
@@ -44,16 +55,18 @@ def rollout_episode(sumocfg, controller_name, T, seed, begin, warmup):
     rng = np.random.default_rng(seed + 7)
     policy = build_policy(env, controller_name, rng)
 
-    states, actions = [env.state()], []
+    states, actions, edges = [env.state()], [], [env.edge_features().reshape(-1)]
     for t in range(T):
         phases = policy(t)
         actions.append(env.encode_action(np.clip(phases, 0, env.P_max - 1)))
         states.append(env.step(phases))
+        edges.append(env.edge_features().reshape(-1))
     env.close()
 
     return {
         "state": np.stack(states[:-1]).astype(np.float32),
         "action": np.stack(actions).astype(np.float32),
+        "edge_feat": np.stack(edges[:-1]).astype(np.float32),   # (T, N*deg*EDGE_PAIR_DIM)
         "controller": controller_name,
         "seed": seed,
     }
@@ -72,6 +85,8 @@ def make_env_meta(sumocfg, begin, warmup):
         "P_max": env.P_max,
         "neighbor_idx": idx,
         "neighbor_mask": mask,
+        "deg": int(idx.shape[1]),
+        "edge_pair_dim": env.edge_pair_dim(),
         "tl_ids": list(env.tl_ids),
         "n_green_phases": [len(env.green_phases[t]) for t in env.tl_ids],
     }
@@ -103,21 +118,26 @@ def generate_counterfactual(sumocfg, out_dir, n_anchors, horizon, begin, warmup,
         for _ in range(12):
             branch_phase_sets.append(rng.integers(0, env.P_max, size=N))
 
+        anchor_edge = env.edge_features().reshape(-1).copy()
         branches = []
         for ph in branch_phase_sets:
             env.load_state(snap)
             ph = np.clip(ph, 0, env.P_max - 1)
             traj = [env.state().copy()]
+            efs = [env.edge_features().reshape(-1).copy()]
             for _h in range(horizon):
                 traj.append(env.step(ph).copy())
+                efs.append(env.edge_features().reshape(-1).copy())
             branches.append({
                 "phases": tuple(int(x) for x in ph),
                 "action": env.encode_action(ph),
                 "states": np.stack(traj).astype(np.float32),
+                "edge_feat": np.stack(efs).astype(np.float32),
             })
         samples.append({
             "anchor_state": anchor_state.astype(np.float32),
             "anchor_action": anchor_action.astype(np.float32),
+            "anchor_edge": anchor_edge.astype(np.float32),
             "branches": branches,
         })
         env.close()

@@ -54,7 +54,8 @@ def exp1_trust_horizon(model, pr, episodes, n_nodes, P, F, ni, nm, device, N=20)
             ah = torch.from_numpy(ep["action"][s:s + HS])
             af = torch.from_numpy(ep["action"][s + HS:s + HS + N])
             true = total_halting(torch.from_numpy(ep["state"][s + HS:s + HS + N]).to(device), n_nodes, P, F)
-            pe_emb = node_rollout(model, sh, ah, af, n_nodes, ni, nm, HS, device)
+            eh = torch.from_numpy(ep["edge_feat"][s:s + HS]) if "edge_feat" in ep else None
+            pe_emb = node_rollout(model, sh, ah, af, n_nodes, ni, nm, HS, device, edge_hist=eh)
             dec = decode(pr, pe_emb).clamp(min=0).sum(-1)               # (N, n_nodes)
             per = total_halting(torch.from_numpy(ep["state"][s + HS - 1]).to(device), n_nodes, P, F).reshape(n_nodes)
             per = per.unsqueeze(0).expand(N, n_nodes)
@@ -79,7 +80,8 @@ def exp2_receding(model, pr, ep, n_nodes, P, F, ni, nm, device, K):
         ah = torch.from_numpy(actions[t0 - HS:t0])
         af = torch.from_numpy(actions[t0:t0 + h])
         true = total_halting(torch.from_numpy(states[t0:t0 + h]).to(device), n_nodes, P, F)
-        pe_emb = node_rollout(model, sh, ah, af, n_nodes, ni, nm, HS, device)
+        eh = torch.from_numpy(ep["edge_feat"][t0 - HS:t0]) if "edge_feat" in ep else None
+        pe_emb = node_rollout(model, sh, ah, af, n_nodes, ni, nm, HS, device, edge_hist=eh)
         dec = decode(pr, pe_emb).clamp(min=0).sum(-1)                  # (h, n_nodes)
         per = total_halting(torch.from_numpy(states[t0 - 1]).to(device), n_nodes, P, F).reshape(n_nodes)
         per = per.unsqueeze(0).expand(h, n_nodes)
@@ -104,7 +106,9 @@ def exp3_ranking_vs_horizon(model, pr, cf_path, n_nodes, P, F, ni, nm, device):
         T_cost = []
         for br in smp["branches"]:
             af = torch.from_numpy(br["action"]).unsqueeze(0).expand(Hmax, -1).contiguous()
-            pe = node_rollout(model, sh, ah, af, n_nodes, ni, nm, HS, device)
+            eh = (torch.from_numpy(smp["anchor_edge"]).unsqueeze(0).expand(HS, -1).contiguous()
+                  if "anchor_edge" in smp else None)
+            pe = node_rollout(model, sh, ah, af, n_nodes, ni, nm, HS, device, edge_hist=eh)
             dec = decode(pr, pe).clamp(min=0).sum(-1)                  # (Hmax, n_nodes)
             P_cost.append(np.cumsum(dec.sum(1).cpu().numpy()))
             tr = total_halting(torch.from_numpy(br["states"][1:]), n_nodes, P, F)

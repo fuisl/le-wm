@@ -38,6 +38,7 @@ def build_model(cfg):
         action_encoder=Embedder(input_dim=cfg["node_A"], smoothed_dim=EMBED_DIM, emb_dim=EMBED_DIM),
         level=cfg["level"], permute_control=cfg["permute_control"],
         neighbor_agg=cfg.get("neighbor_agg", "mean"), emb_dim=EMBED_DIM,
+        edge_dim=cfg.get("edge_dim", 0),
         projector=MLP(EMBED_DIM, 256, EMBED_DIM, norm_fn=bn),
         pred_proj=MLP(EMBED_DIM, 256, EMBED_DIM, norm_fn=bn),
     )
@@ -51,11 +52,13 @@ def load(run, weights, device):
     return m, ck["cfg"]
 
 
-def encode_batch(model, state, action, n_nodes, nbr_idx, nbr_mask, device):
+def encode_batch(model, state, action, n_nodes, nbr_idx, nbr_mask, device, edge_feat=None):
     info = {"state": state.to(device), "action": action.to(device), "n_nodes": n_nodes}
     if model.level == "0.5":
         info["neighbor_idx"] = nbr_idx.to(device)
         info["neighbor_mask"] = nbr_mask.to(device)
+    if model.edge_dim > 0 and edge_feat is not None:
+        info["edge_feat"] = edge_feat.to(device)
     return model.encode(info)
 
 
@@ -85,12 +88,23 @@ def apply_probe(W, emb):
     return torch.cat([emb, ones], -1) @ W.to(emb.device)
 
 
-def node_rollout(model, s_hist, a_hist, a_future, n_nodes, nbr_idx, nbr_mask, HS, device):
-    """s_hist/a_hist: (H, N*F)/(H, N*A). a_future: (n_steps, N*A). -> (n_steps, N, d)."""
+def node_rollout(model, s_hist, a_hist, a_future, n_nodes, nbr_idx, nbr_mask, HS, device,
+                 edge_hist=None):
+    """s_hist/a_hist: (H, N*F)/(H, N*A). a_future: (n_steps, N*A). -> (n_steps, N, d).
+    edge_hist: (H, N*deg*EF) context edge features; held STALE for every rolled step
+    (we have no future edge observations at inference - the CoDreamer stale-graph
+    approximation, documented in D2)."""
+    from traffic.multi_agent import edge_message_pool
     nbr_idx, nbr_mask = nbr_idx.to(device), nbr_mask.to(device)
+    edge_stale = None
+    if model.edge_dim > 0 and edge_hist is not None:
+        deg = nbr_idx.shape[1]
+        eh = edge_hist.to(device).view(HS, n_nodes, deg, model.edge_dim)[-HS:]      # (HS,N,deg,EF)
+        edge_stale = eh.permute(1, 2, 0, 3).unsqueeze(0)                            # (1,N,deg,HS,EF)
     with torch.no_grad():
         out = encode_batch(model, s_hist.unsqueeze(0), a_hist.unsqueeze(0),
-                           n_nodes, nbr_idx, nbr_mask, device)
+                           n_nodes, nbr_idx, nbr_mask, device,
+                           edge_feat=edge_hist.unsqueeze(0) if edge_hist is not None else None)
         H = s_hist.shape[0]
         z = out["emb"].reshape(1, n_nodes, H, -1).transpose(1, 2)      # (1,H,N,d)
         act = out["act_emb"].reshape(1, n_nodes, H, -1).transpose(1, 2)
@@ -99,7 +113,9 @@ def node_rollout(model, s_hist, a_hist, a_future, n_nodes, nbr_idx, nbr_mask, HS
             z_ctx, a_ctx = z[:, -HS:], act[:, -HS:]
             if model.level == "0.5":
                 z_bn, a_bn = z_ctx.transpose(1, 2), a_ctx.transpose(1, 2)  # (1,N,HS,·)
-                if model.neighbor_agg == "pna":
+                if model.edge_dim > 0:
+                    z_pool = edge_message_pool(z_bn, edge_stale, nbr_idx, nbr_mask, model.msg_mlp)
+                elif model.neighbor_agg == "pna":
                     z_pool = model.nbr_proj(masked_neighbor_pna(z_bn, nbr_idx, nbr_mask))
                 else:
                     z_pool = masked_neighbor_mean(z_bn, nbr_idx, nbr_mask)

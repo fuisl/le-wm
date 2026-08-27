@@ -90,6 +90,29 @@ def masked_neighbor_pna(x, neighbor_idx, neighbor_mask):
     return scaled.reshape(B, N, T, 12 * D)
 
 
+def edge_message_pool(z_bn, edge_bn, neighbor_idx, neighbor_mask, msg_mlp):
+    """Edge-conditioned, direction-aware 1-hop message pass (MPNN message fn).
+
+    z_bn:      (B, N, T, d)          own node embeddings
+    edge_bn:   (B, N, deg, T, EF)    per neighbour-slot edge state, EF = [link j->i
+               (arriving), link i->j (spillback room)] - direction is IN the feature
+    msg_mlp:   maps (d + EF) -> d
+    returns:   (B, N, T, d)          masked-mean of msg_mlp([z^j, e_ji, e_ij]) over
+                                     node i's real neighbours j
+
+    One hop, one round - the wave-speed locality argument (C2) says that is
+    sufficient per step; the pool is recomputed each rollout step so the light
+    cone still grows ~1 hop/step.
+    """
+    B, N, T, D = z_bn.shape
+    deg = neighbor_idx.shape[1]
+    safe = neighbor_idx.clamp(min=0)
+    z_nbr = z_bn[:, safe]                                  # (B, N, deg, T, D)
+    msg = msg_mlp(torch.cat([z_nbr, edge_bn], dim=-1))     # (B, N, deg, T, D)
+    m = neighbor_mask.to(msg.dtype).view(1, N, deg, 1, 1)
+    return (msg * m).sum(2) / m.sum(2).clamp(min=1.0)
+
+
 class MultiAgentJEPA(JEPA):
     """Level 0 ("no coupling") / Level 0.5 ("pooled neighbor summary") JEPA.
 
@@ -112,6 +135,7 @@ class MultiAgentJEPA(JEPA):
         pred_proj=None,
         neighbor_agg="mean",
         emb_dim=None,
+        edge_dim=0,
     ):
         super().__init__(encoder, predictor, action_encoder, projector, pred_proj)
         level = str(level)  # hydra CLI overrides (model.level=0) parse unquoted "0" as int
@@ -120,6 +144,7 @@ class MultiAgentJEPA(JEPA):
         self.level = level
         self.permute_control = permute_control
         self.neighbor_agg = neighbor_agg
+        self.edge_dim = edge_dim
         self.permute_seed = 0
         self._perm_cache = {}  # n_nodes -> fixed derangement, drawn once per model instance
         # PNA yields 12*d per node; project back to d so the predictor input width
@@ -128,6 +153,16 @@ class MultiAgentJEPA(JEPA):
         if neighbor_agg == "pna":
             assert emb_dim is not None, "emb_dim required for neighbor_agg='pna'"
             self.nbr_proj = torch.nn.Linear(12 * emb_dim, emb_dim)
+        # edge_dim>0: pool msg_mlp([z^j, e_ji, e_ij]) instead of raw z^j - the
+        # dynamic edge state D2/D4 name as the missing coupling ingredient.
+        self.msg_mlp = None
+        if edge_dim > 0:
+            assert emb_dim is not None, "emb_dim required for edge_dim>0"
+            self.msg_mlp = torch.nn.Sequential(
+                torch.nn.Linear(emb_dim + edge_dim, 2 * emb_dim),
+                torch.nn.SiLU(),
+                torch.nn.Linear(2 * emb_dim, emb_dim),
+            )
 
     def _fixed_derangement(self, n, device):
         """One permutation, fixed for the lifetime of this model instance (per
@@ -190,7 +225,12 @@ class MultiAgentJEPA(JEPA):
         z_bn = rearrange(z, "(b n) t d -> b n t d", b=B)
         act_bn = rearrange(act_emb, "(b n) t d -> b n t d", b=B)
 
-        if self.neighbor_agg == "pna":
+        if self.edge_dim > 0:
+            ef = info["edge_feat"].float()                 # (B, T, N*deg*edge_dim)
+            deg = neighbor_idx.shape[1]
+            edge_bn = ef.view(B, T, n, deg, self.edge_dim).permute(0, 2, 3, 1, 4)  # (B,N,deg,T,EF)
+            z_pool = edge_message_pool(z_bn, edge_bn, neighbor_idx, neighbor_mask, self.msg_mlp)
+        elif self.neighbor_agg == "pna":
             pna = masked_neighbor_pna(z_bn, neighbor_idx, neighbor_mask)  # (B,N,T,12d)
             z_pool = self.nbr_proj(pna)
         else:

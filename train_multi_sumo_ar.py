@@ -25,14 +25,16 @@ from einops import rearrange
 
 from module import MLP, ARPredictor, Embedder, SIGReg
 from traffic.dataset import TrafficDataset
-from traffic.multi_agent import MultiAgentJEPA, masked_neighbor_mean, masked_neighbor_pna
+from traffic.multi_agent import (
+    MultiAgentJEPA, masked_neighbor_mean, masked_neighbor_pna, edge_message_pool,
+)
 
 EMBED_DIM = 64
 HISTORY = 3
 SIGREG_W = 0.09
 
 
-def build_model(node_F, node_A, level, permute_control, neighbor_agg="mean"):
+def build_model(node_F, node_A, level, permute_control, neighbor_agg="mean", edge_dim=0):
     pred_in = EMBED_DIM if str(level) == "0" else 2 * EMBED_DIM
     bn = torch.nn.BatchNorm1d
     return MultiAgentJEPA(
@@ -42,7 +44,7 @@ def build_model(node_F, node_A, level, permute_control, neighbor_agg="mean"):
                               dim_head=32, dropout=0.1, emb_dropout=0.0),
         action_encoder=Embedder(input_dim=node_A, smoothed_dim=EMBED_DIM, emb_dim=EMBED_DIM),
         level=level, permute_control=permute_control,
-        neighbor_agg=neighbor_agg, emb_dim=EMBED_DIM,
+        neighbor_agg=neighbor_agg, emb_dim=EMBED_DIM, edge_dim=edge_dim,
         projector=MLP(EMBED_DIM, 256, EMBED_DIM, norm_fn=bn),
         pred_proj=MLP(EMBED_DIM, 256, EMBED_DIM, norm_fn=bn),
     )
@@ -60,6 +62,12 @@ def ar_forward(model, sigreg, batch, n_nodes, ni, nm, device, K):
     info = {"state": state, "action": action, "n_nodes": n_nodes}
     if lvl05:
         info["neighbor_idx"] = ni.to(device); info["neighbor_mask"] = nm.to(device)
+    edge_bn = None
+    if model.edge_dim > 0:
+        ef = batch["edge_feat"].to(device).float()               # (B, W, N*deg*EF)
+        deg = ni.shape[1]
+        edge_bn = ef.view(B, W, n_nodes, deg, model.edge_dim).permute(0, 2, 3, 1, 4)  # (B,N,deg,W,EF)
+        info["edge_feat"] = ef
     out = model.encode(info)
     emb = out["emb"]                                   # (B*N, W, d) own
     act_emb = out["act_emb"]                           # (B*N, W, a)
@@ -69,12 +77,14 @@ def ar_forward(model, sigreg, batch, n_nodes, ni, nm, device, K):
 
     ni_d = ni.to(device); nm_d = nm.to(device)
 
-    def pred_in(z_bn, a_bn):
-        """z_bn/a_bn: (B,N,ctx,·) -> predictor inputs (B*N,ctx,·)."""
+    def pred_in(z_bn, a_bn, e_bn=None):
+        """z_bn/a_bn: (B,N,ctx,·), e_bn: (B,N,deg,ctx,EF) -> predictor inputs (B*N,ctx,·)."""
         if not lvl05:
             return (rearrange(z_bn, "b n t d -> (b n) t d"),
                     rearrange(a_bn, "b n t d -> (b n) t d"))
-        if model.neighbor_agg == "pna":
+        if model.edge_dim > 0:
+            zp = edge_message_pool(z_bn, e_bn, ni_d, nm_d, model.msg_mlp)
+        elif model.neighbor_agg == "pna":
             zp = model.nbr_proj(masked_neighbor_pna(z_bn, ni_d, nm_d))
         else:
             zp = masked_neighbor_mean(z_bn, ni_d, nm_d)
@@ -86,7 +96,8 @@ def ar_forward(model, sigreg, batch, n_nodes, ni, nm, device, K):
                 rearrange(torch.cat([a_bn, ap], -1), "b n t d -> (b n) t d"))
 
     # ---- 1-step teacher-forced: predict step HISTORY from real steps [0,HISTORY) ----
-    pe, pa = pred_in(emb_bn[:, :, :HISTORY], act_bn[:, :, :HISTORY])
+    e0 = edge_bn[:, :, :, :HISTORY] if edge_bn is not None else None
+    pe, pa = pred_in(emb_bn[:, :, :HISTORY], act_bn[:, :, :HISTORY], e0)
     tf_pred = model.predict(pe, pa)[:, -1]                        # (B*N, d) ~ emb[:,HISTORY]
     tf_loss = (tf_pred - emb[:, HISTORY]).pow(2).mean()
 
@@ -96,7 +107,8 @@ def ar_forward(model, sigreg, batch, n_nodes, ni, nm, device, K):
     roll_loss = 0.0
     wsum = 0.0
     for k in range(1, K + 1):
-        pe, pa = pred_in(z_roll[:, :, -HISTORY:], a_roll[:, :, -HISTORY:])
+        ek = edge_bn[:, :, :, k:k + HISTORY] if edge_bn is not None else None  # teacher-forced edges
+        pe, pa = pred_in(z_roll[:, :, -HISTORY:], a_roll[:, :, -HISTORY:], ek)
         nxt = model.predict(pe, pa)[:, -1]                        # (B*N, d)
         nxt_bn = rearrange(nxt, "(b n) d -> b n 1 d", b=B)
         w = 1.0 / k
@@ -122,6 +134,7 @@ def main():
     p.add_argument("--tag", default="L05ar")
     p.add_argument("--rollout_k", type=int, default=4)
     p.add_argument("--neighbor_agg", default="mean", choices=["mean", "pna"])
+    p.add_argument("--edge_dim", type=int, default=0, help="per-neighbour edge-feature width (0 = off)")
     p.add_argument("--epochs", type=int, default=80)
     p.add_argument("--batch_size", type=int, default=32)
     p.add_argument("--lr", type=float, default=3e-4)
@@ -141,7 +154,7 @@ def main():
     K = args.rollout_k
     window = HISTORY + K
     print(f"cologne8 N={n_nodes} F={node_F} A={node_A}  level={args.level} "
-          f"permute={args.permute_control}  agg={args.neighbor_agg}  rollout_k={K}  window={window}")
+          f"permute={args.permute_control}  agg={args.neighbor_agg}  edge_dim={args.edge_dim}  rollout_k={K}  window={window}")
 
     tr_set = TrafficDataset(dd / "train.pt", window=window)
     va_set = TrafficDataset(dd / "val.pt", window=window)
@@ -149,7 +162,7 @@ def main():
     va = torch.utils.data.DataLoader(va_set, batch_size=args.batch_size, shuffle=False)
     print(f"train windows {len(tr_set)}  val windows {len(va_set)}")
 
-    model = build_model(node_F, node_A, args.level, args.permute_control, args.neighbor_agg).to(device)
+    model = build_model(node_F, node_A, args.level, args.permute_control, args.neighbor_agg, args.edge_dim).to(device)
     n_params = sum(x.numel() for x in model.parameters())
     print(f"params {n_params/1e3:.0f}K")
     sigreg = SIGReg(knots=17, num_proj=1024).to(device)
@@ -187,6 +200,8 @@ def main():
             info = {"state": b0["state"].to(device), "action": b0["action"].to(device), "n_nodes": n_nodes}
             if model.level == "0.5":
                 info["neighbor_idx"] = ni.to(device); info["neighbor_mask"] = nm.to(device)
+            if model.edge_dim > 0:
+                info["edge_feat"] = b0["edge_feat"].to(device)
             zstd = model.encode(info)["emb"].reshape(-1, EMBED_DIM).std(0).mean().item()
         acc, vacc = np.array(acc), np.array(vacc)
         wb.log({"epoch": ep, "lr": sched.get_last_lr()[0], "z_std": zstd,
@@ -201,7 +216,7 @@ def main():
             torch.save({"model_state": model.state_dict(),
                         "cfg": {"node_F": node_F, "node_A": node_A, "level": args.level,
                                 "permute_control": args.permute_control, "embed_dim": EMBED_DIM,
-                                "history": HISTORY, "rollout_k": K, "neighbor_agg": args.neighbor_agg},
+                                "history": HISTORY, "rollout_k": K, "neighbor_agg": args.neighbor_agg, "edge_dim": args.edge_dim},
                         "epoch": ep}, run_dir / f"weights_epoch_{ep}.pt")
     wb.finish()
     print(f"done -> {run_dir}")

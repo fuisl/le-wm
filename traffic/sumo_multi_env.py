@@ -71,8 +71,13 @@ def _discover_green_phases(tl_id):
 
 
 class SumoMultiEnv:
+    EDGE_FEAT_DIM = 5          # per directed link: [occupancy, halting, speed/max, tt/fftt, veh count]
+    EDGE_PAIR_DIM = 10        # per neighbour slot: [link j->i (5), link i->j (5)]
+
     def __init__(self, sumocfg_path, begin=25200, seed=0, warmup=10,
-                 step_length=STEP_LENGTH, metrics=False, tripinfo_dir="/tmp/claude-1000"):
+                 step_length=STEP_LENGTH, metrics=False, tripinfo_dir="/tmp/claude-1000",
+                 hop_cap=999):
+        self.hop_cap = hop_cap
         self.sumocfg_path = os.path.abspath(sumocfg_path)
         self.scenario_dir = os.path.dirname(self.sumocfg_path)
         self.begin = begin
@@ -126,28 +131,41 @@ class SumoMultiEnv:
         # "edge between two TL nodes" test leaves almost every signal isolated.)
         node_to_tl = {n.getID(): t for t, n in tls_nodes.items() if n is not None}
         tl_node_ids = set(node_to_tl)
+        # per-edge free-flow travel time and max speed, for normalising the edge state
+        self._edge_maxspeed = {e.getID(): max(e.getSpeed(), 1.0) for e in net.getEdges()}
+        self._edge_fftt = {e.getID(): max(e.getLength() / max(e.getSpeed(), 1.0), 1e-3)
+                           for e in net.getEdges()}
+        # adjacency + the FIRST edge leaving i's junction on the chain toward j
+        # (the "link i->j" the coupling rides on). hop_cap keeps compact nets from
+        # collapsing to near-complete graphs (ingolstadt21 mean degree 13.5 -> capped).
         adj = {t: set() for t in self.tl_ids}
+        link_edges = {}     # (tl_i, tl_j) -> [sumo edge id(s), the first hop from i toward j]
         for tid, node in tls_nodes.items():
             if node is None:
                 continue
-            # BFS forward through non-TL nodes; a TL node reached = downstream nbr
             seen = {node.getID()}
-            frontier = [node]
-            while frontier:
+            frontier = [(node, None)]   # (node, first-edge-id that started this chain)
+            hops = 0
+            while frontier and hops < self.hop_cap:
                 nxt = []
-                for nd in frontier:
+                for nd, first_e in frontier:
                     for e in nd.getOutgoing():
                         tn = e.getToNode()
                         tnid = tn.getID()
+                        fe = first_e if first_e is not None else e.getID()
                         if tnid in seen:
                             continue
                         seen.add(tnid)
                         if tnid in tl_node_ids and node_to_tl[tnid] != tid:
-                            adj[tid].add(node_to_tl[tnid])
-                            adj[node_to_tl[tnid]].add(tid)  # undirected for pooling
+                            j = node_to_tl[tnid]
+                            adj[tid].add(j)
+                            adj[j].add(tid)
+                            link_edges.setdefault((tid, j), []).append(fe)
                         else:
-                            nxt.append(tn)
+                            nxt.append((tn, fe))
                 frontier = nxt
+                hops += 1
+        self._link_edges = link_edges
         deg = max((len(v) for v in adj.values()), default=0)
         deg = max(deg, 1)
         N = len(self.tl_ids)
@@ -267,7 +285,47 @@ class SumoMultiEnv:
     def neighbor_table(self):
         return self._nbr_idx.copy(), self._nbr_mask.copy()
 
+    def edge_pair_dim(self):
+        return self.EDGE_PAIR_DIM
+
     # -- observation -----------------------------------------------------
+
+    def _link_state(self, tl_a, tl_b):
+        """State of the road link from TL a's junction toward TL b's junction:
+        [occupancy, halting count, speed/maxspeed, traveltime/freeflow, veh count].
+        Zeros if no such link. halting + veh count are left as raw counts (a
+        platoon-in-transit proxy); the other three are 0..~1-ish ratios."""
+        eids = self._link_edges.get((tl_a, tl_b), [])
+        if not eids:
+            return np.zeros(self.EDGE_FEAT_DIM, dtype=np.float32)
+        occ = spd = ttr = 0.0
+        hn = vn = 0.0
+        for eid in eids:
+            occ += traci.edge.getLastStepOccupancy(eid)
+            spd += traci.edge.getLastStepMeanSpeed(eid) / self._edge_maxspeed.get(eid, 13.9)
+            tt = traci.edge.getTraveltime(eid)
+            ttr += tt / self._edge_fftt.get(eid, tt if tt > 0 else 1.0)
+            hn += traci.edge.getLastStepHaltingNumber(eid)
+            vn += traci.edge.getLastStepVehicleNumber(eid)
+        n = len(eids)
+        return np.array([occ / n, hn, spd / n, ttr / n, vn], dtype=np.float32)
+
+    def edge_features(self):
+        """(N, deg, EDGE_PAIR_DIM) aligned with neighbor_table(): for node i, slot
+        k (neighbour j), [link j->i (what's arriving from j), link i->j (spillback
+        room toward j)]. Zeros for masked slots."""
+        N, deg = self._nbr_idx.shape
+        out = np.zeros((N, deg, self.EDGE_PAIR_DIM), dtype=np.float32)
+        for tid in self.tl_ids:
+            i = self._tl_index[tid]
+            for k in range(deg):
+                j_idx = self._nbr_idx[i, k]
+                if j_idx < 0:
+                    continue
+                jt = self.tl_ids[j_idx]
+                out[i, k, : self.EDGE_FEAT_DIM] = self._link_state(jt, tid)   # j -> i (incoming)
+                out[i, k, self.EDGE_FEAT_DIM:] = self._link_state(tid, jt)    # i -> j (outgoing)
+        return out
 
     def _phase_pressure(self, tid):
         """Summed halting count on lanes served (green) by each green phase."""

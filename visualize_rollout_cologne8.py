@@ -41,7 +41,7 @@ def fit_pressure_probe(model, path, n_nodes, P, F, nbr_idx, nbr_mask, device):
     X, Y = [], []
     with torch.no_grad():
         for b in ld:
-            o = encode_batch(model, b["state"], b["action"], n_nodes, nbr_idx, nbr_mask, device)
+            o = encode_batch(model, b["state"], b["action"], n_nodes, nbr_idx, nbr_mask, device, edge_feat=b.get("edge_feat"))
             B, T = b["state"].shape[:2]
             st = b["state"].view(B, T, n_nodes, F)[..., :P]
             z = o["emb"].reshape(B, n_nodes, T, -1).transpose(1, 2)
@@ -77,7 +77,8 @@ def horizon_curve(model, pr, episodes, n_nodes, P, F, nbr_idx, nbr_mask, HS, n_s
             ah = torch.from_numpy(ep["action"][s:s + HS])
             af = torch.from_numpy(ep["action"][s + HS:s + HS + n_steps])
             true = torch.from_numpy(ep["state"][s + HS:s + HS + n_steps]).to(device).view(n_steps, n_nodes, F)[..., :P].sum(-1)
-            pe_emb = node_rollout(model, sh, ah, af, n_nodes, nbr_idx, nbr_mask, HS, device)
+            eh = torch.from_numpy(ep["edge_feat"][s:s + HS]) if "edge_feat" in ep else None
+            pe_emb = node_rollout(model, sh, ah, af, n_nodes, nbr_idx, nbr_mask, HS, device, edge_hist=eh)
             dec = decode(pr, pe_emb).clamp(min=0).sum(-1)     # (n_steps, N) total halting/node
             per = torch.from_numpy(ep["state"][s + HS - 1]).to(device).view(n_nodes, F)[..., :P].sum(-1)
             per = per.unsqueeze(0).expand(n_steps, n_nodes)
@@ -112,9 +113,10 @@ def main():
 
         # teacher-forced: encode every true state (Embedder is pointwise in time)
         with torch.no_grad():
+            ef_full = torch.from_numpy(ep["edge_feat"]).unsqueeze(0) if "edge_feat" in ep else None
             o = encode_batch(model, torch.from_numpy(states).unsqueeze(0),
                              torch.from_numpy(actions).unsqueeze(0), n_nodes,
-                             nbr_idx, nbr_mask, device)
+                             nbr_idx, nbr_mask, device, edge_feat=ef_full)
             emb_tf = o["emb"].reshape(1, n_nodes, T, -1).transpose(1, 2)[0]   # (T, N, d)
             tf_pressure = decode(pr, emb_tf).clamp(min=0).cpu().numpy()       # (T, N, P)
 
@@ -122,7 +124,8 @@ def main():
         sh = torch.from_numpy(states[:HISTORY])
         ah = torch.from_numpy(actions[:HISTORY])
         af = torch.from_numpy(actions[HISTORY:])
-        pe_emb = node_rollout(model, sh, ah, af, n_nodes, nbr_idx, nbr_mask, HISTORY, device)  # (T-H, N, d)
+        eh0 = torch.from_numpy(ep["edge_feat"][:HISTORY]) if "edge_feat" in ep else None
+        pe_emb = node_rollout(model, sh, ah, af, n_nodes, nbr_idx, nbr_mask, HISTORY, device, edge_hist=eh0)  # (T-H, N, d)
         im_pressure = decode(pr, pe_emb).clamp(min=0).detach().cpu().numpy()  # (T-H, N, P)
 
         models_out[key] = {
