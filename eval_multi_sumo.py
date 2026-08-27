@@ -22,7 +22,7 @@ from scipy.stats import spearmanr
 
 from module import MLP, ARPredictor, Embedder
 from traffic.dataset import TrafficDataset
-from traffic.multi_agent import MultiAgentJEPA, masked_neighbor_mean
+from traffic.multi_agent import MultiAgentJEPA, masked_neighbor_mean, masked_neighbor_pna
 
 EMBED_DIM = 64
 
@@ -37,6 +37,7 @@ def build_model(cfg):
                               dim_head=32, dropout=0.1, emb_dropout=0.0),
         action_encoder=Embedder(input_dim=cfg["node_A"], smoothed_dim=EMBED_DIM, emb_dim=EMBED_DIM),
         level=cfg["level"], permute_control=cfg["permute_control"],
+        neighbor_agg=cfg.get("neighbor_agg", "mean"), emb_dim=EMBED_DIM,
         projector=MLP(EMBED_DIM, 256, EMBED_DIM, norm_fn=bn),
         pred_proj=MLP(EMBED_DIM, 256, EMBED_DIM, norm_fn=bn),
     )
@@ -98,7 +99,10 @@ def node_rollout(model, s_hist, a_hist, a_future, n_nodes, nbr_idx, nbr_mask, HS
             z_ctx, a_ctx = z[:, -HS:], act[:, -HS:]
             if model.level == "0.5":
                 z_bn, a_bn = z_ctx.transpose(1, 2), a_ctx.transpose(1, 2)  # (1,N,HS,·)
-                z_pool = masked_neighbor_mean(z_bn, nbr_idx, nbr_mask)
+                if model.neighbor_agg == "pna":
+                    z_pool = model.nbr_proj(masked_neighbor_pna(z_bn, nbr_idx, nbr_mask))
+                else:
+                    z_pool = masked_neighbor_mean(z_bn, nbr_idx, nbr_mask)
                 a_pool = masked_neighbor_mean(a_bn, nbr_idx, nbr_mask)
                 if model.permute_control:
                     perm = model._fixed_derangement(n_nodes, device)

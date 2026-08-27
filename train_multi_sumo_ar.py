@@ -25,14 +25,14 @@ from einops import rearrange
 
 from module import MLP, ARPredictor, Embedder, SIGReg
 from traffic.dataset import TrafficDataset
-from traffic.multi_agent import MultiAgentJEPA, masked_neighbor_mean
+from traffic.multi_agent import MultiAgentJEPA, masked_neighbor_mean, masked_neighbor_pna
 
 EMBED_DIM = 64
 HISTORY = 3
 SIGREG_W = 0.09
 
 
-def build_model(node_F, node_A, level, permute_control):
+def build_model(node_F, node_A, level, permute_control, neighbor_agg="mean"):
     pred_in = EMBED_DIM if str(level) == "0" else 2 * EMBED_DIM
     bn = torch.nn.BatchNorm1d
     return MultiAgentJEPA(
@@ -42,6 +42,7 @@ def build_model(node_F, node_A, level, permute_control):
                               dim_head=32, dropout=0.1, emb_dropout=0.0),
         action_encoder=Embedder(input_dim=node_A, smoothed_dim=EMBED_DIM, emb_dim=EMBED_DIM),
         level=level, permute_control=permute_control,
+        neighbor_agg=neighbor_agg, emb_dim=EMBED_DIM,
         projector=MLP(EMBED_DIM, 256, EMBED_DIM, norm_fn=bn),
         pred_proj=MLP(EMBED_DIM, 256, EMBED_DIM, norm_fn=bn),
     )
@@ -73,7 +74,10 @@ def ar_forward(model, sigreg, batch, n_nodes, ni, nm, device, K):
         if not lvl05:
             return (rearrange(z_bn, "b n t d -> (b n) t d"),
                     rearrange(a_bn, "b n t d -> (b n) t d"))
-        zp = masked_neighbor_mean(z_bn, ni_d, nm_d)
+        if model.neighbor_agg == "pna":
+            zp = model.nbr_proj(masked_neighbor_pna(z_bn, ni_d, nm_d))
+        else:
+            zp = masked_neighbor_mean(z_bn, ni_d, nm_d)
         ap = masked_neighbor_mean(a_bn, ni_d, nm_d)
         if model.permute_control:
             perm = model._fixed_derangement(n_nodes, device)
@@ -117,6 +121,7 @@ def main():
     p.add_argument("--permute_control", action="store_true")
     p.add_argument("--tag", default="L05ar")
     p.add_argument("--rollout_k", type=int, default=4)
+    p.add_argument("--neighbor_agg", default="mean", choices=["mean", "pna"])
     p.add_argument("--epochs", type=int, default=80)
     p.add_argument("--batch_size", type=int, default=32)
     p.add_argument("--lr", type=float, default=3e-4)
@@ -135,7 +140,7 @@ def main():
     K = args.rollout_k
     window = HISTORY + K
     print(f"cologne8 N={n_nodes} F={node_F} A={node_A}  level={args.level} "
-          f"permute={args.permute_control}  rollout_k={K}  window={window}")
+          f"permute={args.permute_control}  agg={args.neighbor_agg}  rollout_k={K}  window={window}")
 
     tr_set = TrafficDataset(dd / "train.pt", window=window)
     va_set = TrafficDataset(dd / "val.pt", window=window)
@@ -143,7 +148,7 @@ def main():
     va = torch.utils.data.DataLoader(va_set, batch_size=args.batch_size, shuffle=False)
     print(f"train windows {len(tr_set)}  val windows {len(va_set)}")
 
-    model = build_model(node_F, node_A, args.level, args.permute_control).to(device)
+    model = build_model(node_F, node_A, args.level, args.permute_control, args.neighbor_agg).to(device)
     print(f"params {sum(x.numel() for x in model.parameters())/1e3:.0f}K")
     sigreg = SIGReg(knots=17, num_proj=1024).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -175,7 +180,7 @@ def main():
             torch.save({"model_state": model.state_dict(),
                         "cfg": {"node_F": node_F, "node_A": node_A, "level": args.level,
                                 "permute_control": args.permute_control, "embed_dim": EMBED_DIM,
-                                "history": HISTORY, "rollout_k": K},
+                                "history": HISTORY, "rollout_k": K, "neighbor_agg": args.neighbor_agg},
                         "epoch": ep}, run_dir / f"weights_epoch_{ep}.pt")
     print(f"done -> {run_dir}")
 
