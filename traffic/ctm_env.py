@@ -89,6 +89,30 @@ class CTMGridEnv:
         """Per-node observation, fixed shape (n, F). F == node_feature_dim()."""
         return self.queues.astype(np.float32)
 
+    EDGE_PAIR_DIM = 2   # [my queue toward j (outgoing), j's queue toward me (incoming)]
+
+    def edge_pair_dim(self):
+        return self.EDGE_PAIR_DIM
+
+    def edge_features(self):
+        """(n, 4, 2) aligned with neighbor_table(): for node i, compass slot d,
+        [queues[i, d]      -- vehicles at i heading toward neighbour(i,d)  (i->j),
+         queues[j, opp(d)] -- vehicles at j heading back toward i          (j->i)].
+        This is the EXACT causal quantity for spillback/platoon coupling on the
+        CTM grid - the cleanest possible edge-conditioning test. Zeros on boundary
+        slots."""
+        out = np.zeros((self.n, 4, 2), dtype=np.float32)
+        for r in range(self.rows):
+            for c in range(self.cols):
+                i = self.idx(r, c)
+                for d in range(4):
+                    j = self.neighbor(r, c, d)
+                    if j is None:
+                        continue
+                    out[i, d, 0] = self.queues[i, d]
+                    out[i, d, 1] = self.queues[j, OPPOSITE[d]]
+        return out
+
     def node_action(self, phases):
         """Per-node action one-hot, fixed shape (n, 2)."""
         phases = np.asarray(phases)
