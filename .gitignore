@@ -11,3 +11,4 @@ traffic_runs_sumo/
 wandb/
 _oracle_multi_snap.xml
 _tripinfo_*.xml
+traffic_data_ingolstadt21/

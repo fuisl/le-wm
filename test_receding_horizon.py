@@ -122,9 +122,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", nargs="+", default=["L0", "L05", "L05perm"])
     ap.add_argument("--episode", type=int, default=3)
+    ap.add_argument("--data_dir", default=DATA_DIR)
+    ap.add_argument("--weights", default=WEIGHTS)
     args = ap.parse_args()
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    dd = Path(DATA_DIR)
+    dd = Path(args.data_dir)
     meta = torch.load(dd / "val.pt", weights_only=False)
     n_nodes, P, F = meta["n_nodes"], meta["P_max"], meta["node_feature_dim"]
     ni = torch.from_numpy(np.asarray(meta["neighbor_idx"]))
@@ -135,7 +137,7 @@ def main():
     Ks = [1, 2, 3, 5, 10, 20, None]
     for run in args.runs:
         print(f"\n================ {run} ================")
-        model, _ = load(run, WEIGHTS, device)
+        model, _ = load(run, args.weights, device)
         pr = fit_pressure_probe(model, dd / "train.pt", n_nodes, P, F, ni, nm, device)
 
         me, pe, cnt = exp1_trust_horizon(model, pr, val["episodes"], n_nodes, P, F, ni, nm, device, N=20)
