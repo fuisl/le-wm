@@ -68,7 +68,7 @@ def fit_probe(model, path, window, n_nodes, nbr_idx, nbr_mask, device):
     X, Y = [], []
     with torch.no_grad():
         for b in loader:
-            out = encode_batch(model, b["state"], b["action"], n_nodes, nbr_idx, nbr_mask, device)
+            out = encode_batch(model, b["state"], b["action"], n_nodes, nbr_idx, nbr_mask, device, edge_feat=b.get("edge_feat"))
             B, T = b["state"].shape[:2]
             F = b["state"].shape[-1] // n_nodes
             st = b["state"].view(B, T, n_nodes, F)
@@ -155,7 +155,8 @@ def eval_rollout(model, W, val_path, n_nodes, P_max, nbr_idx, nbr_mask, HS, n_st
             a_hist = torch.from_numpy(ep["action"][start:start + HS])
             a_fut = torch.from_numpy(ep["action"][start + HS:start + HS + n_steps])
             true = torch.from_numpy(ep["state"][start + HS:start + HS + n_steps]).to(device).view(n_steps, n_nodes, F)
-            pe = node_rollout(model, s_hist, a_hist, a_fut, n_nodes, nbr_idx, nbr_mask, HS, device)
+            eh = torch.from_numpy(ep["edge_feat"][start:start + HS]) if "edge_feat" in ep else None
+            pe = node_rollout(model, s_hist, a_hist, a_fut, n_nodes, nbr_idx, nbr_mask, HS, device, edge_hist=eh)
             dec = apply_probe(W, pe)                         # (n_steps, N, F)
             per = s_hist[-1].to(device).view(1, n_nodes, F).expand_as(true)
             me_full += ((dec - true) ** 2).mean((1, 2)).cpu().numpy()
@@ -188,7 +189,9 @@ def eval_cf(model, W, cf_path, n_nodes, P_max, nbr_idx, nbr_mask, HS, device):
         for br in smp["branches"]:
             H = br["states"].shape[0] - 1
             a_fut = torch.from_numpy(br["action"]).unsqueeze(0).expand(H, -1).contiguous()
-            pe = node_rollout(model, s_hist, a_hist, a_fut, n_nodes, nbr_idx, nbr_mask, HS, device)  # (H,N,d)
+            eh = (torch.from_numpy(smp["anchor_edge"]).unsqueeze(0).expand(HS, -1).contiguous()
+                  if "anchor_edge" in smp else None)
+            pe = node_rollout(model, s_hist, a_hist, a_fut, n_nodes, nbr_idx, nbr_mask, HS, device, edge_hist=eh)  # (H,N,d)
             dec = apply_probe(W, pe).view(H, n_nodes, F)
             embs.append(pe[-1].reshape(-1))
             costs_pred.append(dec[..., :P_max].clamp(min=0).sum().item())
