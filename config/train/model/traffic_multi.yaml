@@ -1,0 +1,47 @@
+_target_: traffic.multi_agent.MultiAgentJEPA
+
+level: "0"            # "0" (no coupling) or "0.5" (pooled neighbor summary) - CLI: model.level=0.5
+permute_control: false # attribution control for level 0.5 - CLI: model.permute_control=true
+
+encoder:
+  _target_: module.Embedder
+  input_dim: ???       # set at runtime = CTMGridEnv.node_feature_dim() (fixed F, not n*F)
+  smoothed_dim: ${embed_dim}
+  emb_dim: ${embed_dim}
+
+predictor:
+  _target_: module.ARPredictor
+  num_frames: ${history_size}
+  input_dim: ???       # set at runtime: embed_dim (level 0) or 2*embed_dim (level 0.5)
+  hidden_dim: ${embed_dim}
+  output_dim: ${embed_dim}
+  depth: 4
+  heads: 4
+  mlp_dim: 256
+  dim_head: 32
+  dropout: 0.1
+  emb_dropout: 0.0
+
+action_encoder:
+  _target_: module.Embedder
+  input_dim: ???       # set at runtime = per-node action width (fixed, not n*A)
+  smoothed_dim: ${embed_dim}
+  emb_dim: ${embed_dim}
+
+projector:
+  _target_: module.MLP
+  input_dim: ${embed_dim}
+  output_dim: ${embed_dim}
+  hidden_dim: 256
+  norm_fn:
+    _target_: torch.nn.BatchNorm1d
+    _partial_: true
+
+pred_proj:
+  _target_: module.MLP
+  input_dim: ${embed_dim}
+  output_dim: ${embed_dim}
+  hidden_dim: 256
+  norm_fn:
+    _target_: torch.nn.BatchNorm1d
+    _partial_: true

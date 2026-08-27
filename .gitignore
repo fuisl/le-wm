@@ -5,3 +5,4 @@ wandb/
 traffic_data/
 traffic_data_sumo/
 traffic_runs/
+_oracle_cem_snapshot.xml

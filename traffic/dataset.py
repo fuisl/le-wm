@@ -15,6 +15,8 @@ class TrafficDataset(Dataset):
         self.episodes = data["episodes"]
         self.state_dim = data["state_dim"]
         self.action_dim = data["action_dim"]
+        self.rows = data.get("rows")  # None for non-grid (e.g. SUMO) datasets
+        self.cols = data.get("cols")
         self.window = window
 
         self.index = []

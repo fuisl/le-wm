@@ -51,6 +51,51 @@ class CTMGridEnv:
     def action_dim(self):
         return 2 * self.n
 
+    def node_feature_dim(self):
+        """Fixed per-node feature width F, independent of grid size (n).
+
+        On this compass grid, F is fixed for free (4 approach queues per
+        node) - no pad/pool-over-lanes machinery needed here. That machinery
+        (M1: pad/pool per-lane queue/count/speed/occupancy to fixed F) is
+        only earned when lane count varies across nodes, i.e. real SUMO
+        intersections, not this synthetic grid.
+        """
+        return 4
+
+    def neighbor_table(self):
+        """Directed N/S/E/W neighbor ids for every node, fixed shape (n, 4).
+
+        idx[i, d] is the node id reached from i in direction d (see DIRS),
+        or -1 if i is on the boundary in that direction. mask[i, d] is True
+        iff that neighbor exists. Use mask (not idx == -1) as the pooling
+        weight so boundary nodes get a mean over their *actual* neighbors,
+        not a zero-padded-then-divided-by-4 value - the latter leaks
+        corner/edge/interior identity into the pooled feature, which is
+        exactly the scenario-specific signal this is meant to avoid.
+        """
+        idx = -np.ones((self.n, 4), dtype=np.int64)
+        mask = np.zeros((self.n, 4), dtype=bool)
+        for r in range(self.rows):
+            for c in range(self.cols):
+                i = self.idx(r, c)
+                for d in range(4):
+                    j = self.neighbor(r, c, d)
+                    if j is not None:
+                        idx[i, d] = j
+                        mask[i, d] = True
+        return idx, mask
+
+    def node_features(self):
+        """Per-node observation, fixed shape (n, F). F == node_feature_dim()."""
+        return self.queues.astype(np.float32)
+
+    def node_action(self, phases):
+        """Per-node action one-hot, fixed shape (n, 2)."""
+        phases = np.asarray(phases)
+        onehot = np.zeros((self.n, 2), dtype=np.float32)
+        onehot[np.arange(self.n), phases] = 1.0
+        return onehot
+
     def reset(self):
         self.queues = self.rng.uniform(0, self.capacity * 0.3, size=(self.n, 4))
         self.phase = self.rng.integers(0, 2, size=self.n)
