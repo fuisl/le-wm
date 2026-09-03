@@ -17,3 +17,5 @@ traffic_data_c8_smoke/
 traffic_data_4x4_v2/
 _diag_snap_*.xml
 _switchpen_snap_*.xml
+_pvb_snap_*.xml
+_cmp_snap_*.xml
