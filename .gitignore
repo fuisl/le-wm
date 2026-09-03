@@ -15,3 +15,5 @@ traffic_data_ingolstadt21/
 traffic_data_cologne8_v2/
 traffic_data_c8_smoke/
 traffic_data_4x4_v2/
+_diag_snap_*.xml
+_switchpen_snap_*.xml
