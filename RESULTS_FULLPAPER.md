@@ -224,7 +224,30 @@ Then re-run on each: closed-loop `diag_compounding` (latent-CEM / MaxPressure �
 `diag_matched_switching`, `diag_detectability`.
 
 **Decision rule:** latent-CEM / MaxPressure ≳ 2.5× ⇒ structural negative
-("training-time can't save it either"); ≈ 1.3× ⇒ "here is the fix." Baseline L05ar
-is ~3.43× (Add. 4, 3 seeds) — being refreshed to 5 seeds in the same run.
+("training-time can't save it either"); ≈ 1.3× ⇒ "here is the fix."
 
-Pending: `results/compounding_L05ar*.json`, `results/*_L05ar_ac_v{1,2}.json`.
+### Pivotal number — DONE for v1 ✅ (partial fix, gap not closed)
+
+Closed-loop tail halting, latent-CEM vs MaxPressure vs random, **5 seeds**
+(`diag_compounding.py`, 40 steps):
+
+| model | latent-CEM / MaxPressure | latent-CEM / random | model-pick / random-pick regret | regret drift over episode |
+|---|--:|--:|--:|--:|
+| **L05ar** (baseline, 5-seed refresh) | **3.46×** | 0.48× | 0.79 | **+2177** (rises) |
+| **L05ar\_ac\_v1** (freeze enc.\ + coverage data) | **2.10×** | 0.29× | 0.64 | **−1895** (falls) |
+| L05ar\_ac\_v2 (+ Delta-JEPA displacement) | *(running)* | | | |
+
+**Read:** coverage-aware AC post-training moves the closed-loop gap from
+**3.46× → 2.10×** — it recovers roughly **40 % of the excess over MaxPressure**,
+makes the planner extract more of the oracle-vs-random gain (0.79 → 0.64), and
+*flips the within-episode regret drift from rising to falling* (the AC model does
+not walk itself into worse-modelled regions). But **2.10× still loses clearly to
+a greedy baseline.** Against the decision rule this lands *between* "structural
+negative" and "here is the fix": **a quantified partial fix.** The publishable
+statement is *"training-time coverage recovers ~40 % of the control gap in
+factored latent planning; the residual is not eliminated at this model scale,"*
+which stands as a measured negative and motivates the hierarchy/coupling work.
+v2 (displacement loss; better val rollout: 0.057 vs v1's 0.075) may move it
+further — pending.
+
+Pending: `results/compounding_L05ar_ac_v2.json`; #1/#3/#4 re-runs on v1 and v2.
