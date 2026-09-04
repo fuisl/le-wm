@@ -147,6 +147,38 @@ large-action-space, not multi-agent; if not, the factored joint structure is
 load-bearing. Roadmap item #6(a); **recommend running it before committing to the
 full-paper MA framing.**
 
+## #6(a) solo-agent control — solo0 DONE ✅ (RESCUES the multi-agent contribution)
+
+`diag_detectability.py --solo_agent A` — one intersection plans its H-step phase
+sequence (space $P^H\approx$ the 8-agent per-step joint space); all other signals
+hold. 5 seeds, 125 decision steps, same bootstrap ensemble. Agent 0 (a 4-phase
+intersection):
+
+| signal | full joint search (#4-proper) | **solo agent 0** | solo 95% CI |
+|---|--:|--:|--:|
+| ensemble disagreement | +0.013 | +0.023 | [−0.08, +0.12] |
+| density (GMM) | +0.249 | +0.219 | [+0.17, +0.27] |
+| displacement | +0.218 | +0.297 | [+0.20, +0.40] |
+| **action structure (`n_switch0`)** | **+0.195** | **+0.635** | **[+0.49, +0.77]** |
+| latent coverage (per-agent) | +0.269 | +0.245 | [+0.19, +0.30] |
+| coverage (joint config) | +0.113 | +0.290 | [+0.19, +0.39] |
+
+**Read:** when a *single* agent plans, "how many phase switches does this plan
+make" (`n_switch0`) predicts per-plan model error at **+0.635 — clearly gateable**
+(CI well clear of the 0.35 bar). In the *factored joint* search the identical
+signal collapses to +0.195, not gateable (#4-proper). Same model, same signals,
+same everything — only the search structure changes.
+
+**This is the isolated factored-structure result the multi-agent contribution
+needs:** *plan-level model error is runtime-detectable (via action structure)
+under single-agent planning, and becomes undetectable once the search is over the
+factored joint action space* — because the switching that matters is distributed
+across agents and no cheap per-plan scalar captures the joint pattern. Causal,
+not asserted.
+
+Pending: solo3, solo7 (robustness across the other 4-phase intersections).
+Artifacts: `results/diag_detectability_solo{0,3,7}.json`.
+
 ---
 
 ## #7 — AC post-training — RUNNING ⏳
