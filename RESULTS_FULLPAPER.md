@@ -83,20 +83,69 @@ Artifacts: `results/horizon_sweep/H{2,3,4,6,9}.json`.
 
 ---
 
-## #4-proper — seed-only bootstrap ensemble + #6 MA-specificity — RUNNING ⏳
+## #4-proper — seed-only bootstrap ensemble — DONE ✅ (CB2 negative holds, now powered)
 
-Training K=4 identical L05ar models varying only `--seed` (1001/2002/3003/4004) on
-`traffic_data_cologne8`. Then `diag_detectability.py --ensemble L05ar_bs* --seeds
-777 101 202 303 404 --tag proper`:
-- ensemble disagreement recomputed from the **true bootstrap ensemble** (the
-  MOPO/MOReL mechanism), not the 4 heterogeneous checkpoints of the fast cut;
-- **bootstrap 95 % CIs** on every signal's within-step Spearman;
-- new **`cov_joint`** signal (kNN distance of the *joint* rollout configuration to
-  a joint training bank) vs **`cov_agent`** (per-agent-mean coverage), compared as
-  distinct predictors of per-plan regret — the concrete factored-structure test
-  for "multi-agent".
+K=4 identical L05ar models, seed-only variation (1001/2002/3003/4004), same data
+as L05ar. `diag_detectability.py --ensemble L05ar_bs* --seeds 777 101 202 303 404
+--n_steps 25 --tag proper` — **5 seeds, 125 decision steps**, bootstrap 95 % CIs.
 
-Pending: `results/diag_detectability_proper.json`.
+| signal | within-step Spearman vs per-plan regret | 95 % CI |
+|---|--:|--:|
+| **ensemble disagreement** (true seed-only bootstrap — the MOPO/MOReL gate) | **+0.013** | [−0.01, +0.03] |
+| plausibility (`frac_clipped`) | +0.013 | [−0.02, +0.04] |
+| action structure (`n_switch0`) | +0.195 | [+0.15, +0.24] |
+| displacement (Delta-JEPA-style) | +0.218 | [+0.19, +0.25] |
+| density model (16-comp GMM) | +0.249 | [+0.22, +0.28] |
+| **latent coverage (per-agent)** | **+0.269** | [+0.24, +0.30] |
+
+**Read:** the negative is now properly powered. No signal reaches a gateable
+level (≈0.5). The **canonical ensemble-disagreement gate — a *genuine* seed-only
+bootstrap ensemble, i.e. the actual MOPO/MOReL mechanism — is the weakest signal
+at +0.013, CI spanning 0.** This is *stronger* than the fast cut (0.04 with a
+heterogeneous 4-checkpoint ensemble): the proper bootstrap ensemble carries
+essentially no per-plan signal. Best signal (per-agent coverage, +0.27) has a
+tight non-zero CI but is nowhere near actionable. **Threat C5 resolved; CB2 is
+the headline the paper can lead with.**
+
+Artifact: `results/diag_detectability_proper.json` (+ `_rows.csv`).
+
+## #6 MA-specificity — DONE ✅ (NEGATIVE for the hoped-for framing — honest finding)
+
+Same run. Per-agent-mean coverage vs joint-configuration coverage as distinct
+predictors of per-plan regret, paired bootstrap CI on the difference:
+
+| predictor | within-step Spearman vs regret | 95 % CI |
+|---|--:|--:|
+| `cov_agent` (per-agent-mean) | **+0.269** | [+0.24, +0.30] |
+| `cov_joint` (joint config) | **+0.113** | [+0.09, +0.14] |
+| paired difference (joint − agent) | **−0.156** | [−0.18, −0.13] — **excludes 0** |
+
+**Read:** per-agent coverage predicts per-plan regret **better** than
+joint-configuration coverage. The hypothesis "the model's failure is about the
+*joint* configuration, not any agent in isolation" is **not supported on this
+axis.**
+
+### ⚠️ Consequence for the "multi-agent contribution" (full-paper concern)
+
+Three MA-specific framings are now disconfirmed by our own experiments:
+1. "factored search makes exploitation *stronger*" — MA scale check (regret/gain
+   flat 0.70–0.78 across 8→21 signals);
+2. "the planner selects a bespoke OOD joint *region*" — matched-switching (it is
+   switching *frequency*, not a region);
+3. "joint-configuration coverage is the locus of failure" — #6 above.
+
+**What survives is the mechanism claim only:** the factored joint action space is
+*why* the planner reaches a joint-switching regime (0.72) unreachable by any
+single scripted controller (0.054), *why* the model's rollout degrades there, and
+*why* single-agent detection tools — the MOPO ensemble gate especially — do not
+transfer. For an AAMAS full paper this needs either (a) the honest reframe to
+*"planning over a factored joint action space in a coupled network"* with the
+methodology + the detectability negative as the lead, or (b) one more experiment:
+the **single-agent large-action-space control** (one intersection, large
+phase-plan space) — if the same non-detectability appears there, the effect is
+large-action-space, not multi-agent; if not, the factored joint structure is
+load-bearing. Roadmap item #6(a); **recommend running it before committing to the
+full-paper MA framing.**
 
 ---
 
