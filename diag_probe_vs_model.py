@@ -122,8 +122,16 @@ def main():
 
             errA = np.abs(costA - costC)
             errB = np.abs(costB - costC)
-            spA = spearmanr(costA, costC)[0]
-            spB = spearmanr(costB, costC)[0]
+
+            def _sp(x, y):
+                # spearman is undefined if either side is (near-)constant, e.g. when
+                # a short-horizon CEM collapses the candidate set. Report nan then.
+                if np.unique(np.round(x, 6)).size < 3 or np.unique(np.round(y, 6)).size < 3:
+                    return np.nan
+                return spearmanr(x, y)[0]
+
+            spA = _sp(costA, costC)
+            spB = _sp(costB, costC)
             top1A = int(np.argmin(costA) == np.argmin(costC))
             top1B = int(np.argmin(costB) == np.argmin(costC))
             for s in range(S):
@@ -151,7 +159,9 @@ def main():
           f"B/A {B.mean()/A.mean():.2f}")
     print(f"  model's own contribution  (errB - errA) mean {np.mean(B - A):7.1f}  "
           f"({100*np.mean(B - A)/B.mean():.0f}% of total model+probe error)")
-    print(f"  rank agreement w/ true    A {np.nanmean(spA):+.2f}     B {np.nanmean(spB):+.2f}")
+    n_valid = int(np.sum(~np.isnan(spB)))
+    print(f"  rank agreement w/ true    A {np.nanmean(spA):+.2f}     B {np.nanmean(spB):+.2f}   "
+          f"({n_valid}/{len(spB)} steps with a well-defined model ranking)")
     print(f"  top-1 pick matches true   A {np.mean(t1A):.2f}     B {np.mean(t1B):.2f}   (chance 1/{S})")
 
     frac_model = float(np.mean(B - A) / B.mean())
@@ -175,6 +185,9 @@ def main():
         mean_errA=float(A.mean()), mean_errB=float(B.mean()), ratio_BA=float(B.mean() / A.mean()),
         model_contribution_frac=frac_model,
         rank_A=float(np.nanmean(spA)), rank_B=float(np.nanmean(spB)),
+        rank_B_valid_steps=int(np.sum(~np.isnan(np.array(spB, dtype=float)))),
+        rank_B_total_steps=len(spB),
+        horizon=args.horizon,
         top1_A=float(np.mean(t1A)), top1_B=float(np.mean(t1B)),
         verdict=verdict), indent=2))
     import csv

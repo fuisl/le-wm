@@ -16,6 +16,7 @@ Usage:
 """
 
 import argparse
+import os
 import time
 from pathlib import Path
 
@@ -50,8 +51,9 @@ def build_model(node_F, node_A, level, permute_control, neighbor_agg="mean", edg
     )
 
 
-def ar_forward(model, sigreg, batch, n_nodes, ni, nm, device, K):
-    """window = HISTORY + K. 1-step teacher-forced loss + K-step AR rollout loss."""
+def ar_forward(model, sigreg, batch, n_nodes, ni, nm, device, K, disp_w=0.0):
+    """window = HISTORY + K. 1-step teacher-forced loss + K-step AR rollout loss
+    (+ optional Delta-JEPA latent-displacement loss on the rolled trajectory)."""
     state = batch["state"].to(device).float()
     action = batch["action"].to(device).float()
     B, W = state.shape[:2]
@@ -105,25 +107,38 @@ def ar_forward(model, sigreg, batch, n_nodes, ni, nm, device, K):
     z_roll = emb_bn[:, :, :HISTORY].clone()                       # (B,N,HISTORY,d) own
     a_roll = act_bn[:, :, :HISTORY].clone()
     roll_loss = 0.0
+    disp_loss = 0.0
     wsum = 0.0
+    prev_pred = emb[:, HISTORY - 1]                               # (B*N, d) last real context step
+    prev_true = emb[:, HISTORY - 1]
     for k in range(1, K + 1):
         ek = edge_bn[:, :, :, k:k + HISTORY] if edge_bn is not None else None  # teacher-forced edges
         pe, pa = pred_in(z_roll[:, :, -HISTORY:], a_roll[:, :, -HISTORY:], ek)
         nxt = model.predict(pe, pa)[:, -1]                        # (B*N, d)
         nxt_bn = rearrange(nxt, "(b n) d -> b n 1 d", b=B)
         w = 1.0 / k
-        roll_loss = roll_loss + w * (nxt - emb[:, HISTORY + k - 1]).pow(2).mean()
+        true_k = emb[:, HISTORY + k - 1]
+        roll_loss = roll_loss + w * (nxt - true_k).pow(2).mean()
+        if disp_w > 0.0:
+            # Delta-JEPA: match the step-to-step latent displacement, not just the
+            # absolute embedding -- forces action-sensitivity, resists adjacent collapse.
+            pred_disp = nxt - prev_pred
+            true_disp = true_k - prev_true
+            disp_loss = disp_loss + w * (pred_disp - true_disp).pow(2).mean()
+        prev_pred, prev_true = nxt, true_k
         wsum += w
         z_roll = torch.cat([z_roll, nxt_bn], dim=2)
         # true action for the next step (teacher-forced actions, as at inference)
         a_next = act_bn[:, :, HISTORY + k - 1: HISTORY + k]
         a_roll = torch.cat([a_roll, a_next], dim=2)
     roll_loss = roll_loss / wsum
+    disp_loss = (disp_loss / wsum) if disp_w > 0.0 else torch.zeros((), device=device)
 
     sig_loss = sigreg(emb.transpose(0, 1))
-    loss = tf_loss + roll_loss + SIGREG_W * sig_loss
+    loss = tf_loss + roll_loss + SIGREG_W * sig_loss + disp_w * disp_loss
     rl_log = roll_loss.detach().item() if torch.is_tensor(roll_loss) else roll_loss
-    return loss, tf_loss.item(), rl_log, sig_loss.item()
+    dl_log = disp_loss.detach().item() if torch.is_tensor(disp_loss) else disp_loss
+    return loss, tf_loss.item(), rl_log, sig_loss.item(), dl_log
 
 
 def main():
@@ -142,6 +157,15 @@ def main():
     p.add_argument("--seed", type=int, default=3072)
     p.add_argument("--save_every", type=int, default=40)
     p.add_argument("--wandb", action="store_true")
+    # --- #7 AC post-training options ---
+    p.add_argument("--init_from", default="",
+                   help="run-name or path to a weights_epoch_*.pt to warm-start from "
+                        "(e.g. L05ar or traffic_runs_sumo/L05ar/weights_epoch_80.pt)")
+    p.add_argument("--freeze_encoder", action="store_true",
+                   help="freeze the observation encoder; train predictor + action encoder "
+                        "+ message/projection heads only (the AC post-training stage)")
+    p.add_argument("--displacement_w", type=float, default=0.0,
+                   help="weight on the Delta-JEPA latent-displacement loss (0 = off)")
     args = p.parse_args()
 
     torch.manual_seed(args.seed); np.random.seed(args.seed)
@@ -165,8 +189,27 @@ def main():
     model = build_model(node_F, node_A, args.level, args.permute_control, args.neighbor_agg, args.edge_dim).to(device)
     n_params = sum(x.numel() for x in model.parameters())
     print(f"params {n_params/1e3:.0f}K")
+
+    if args.init_from:
+        ckpt_path = args.init_from
+        if not os.path.exists(ckpt_path):
+            ckpt_path = str(Path("traffic_runs_sumo", args.init_from, "weights_epoch_80.pt"))
+        sd = torch.load(ckpt_path, weights_only=False)["model_state"]
+        missing, unexpected = model.load_state_dict(sd, strict=False)
+        print(f"warm-started from {ckpt_path}  (missing {len(missing)}, unexpected {len(unexpected)})")
+
+    enc_names = ("encoder.",)
+    if args.freeze_encoder:
+        n_frozen = 0
+        for name, prm in model.named_parameters():
+            if name.startswith(enc_names):
+                prm.requires_grad_(False); n_frozen += prm.numel()
+        print(f"froze encoder: {n_frozen/1e3:.0f}K params frozen, "
+              f"{sum(p.numel() for p in model.parameters() if p.requires_grad)/1e3:.0f}K trainable")
+
     sigreg = SIGReg(knots=17, num_proj=1024).to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    opt = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
 
     import wandb_utils
@@ -184,17 +227,19 @@ def main():
         model.train(); t0 = time.time(); acc = []
         for b in tr:
             opt.zero_grad()
-            loss, tf, rl, sl = ar_forward(model, sigreg, b, n_nodes, ni, nm, device, K)
+            loss, tf, rl, sl, dl = ar_forward(model, sigreg, b, n_nodes, ni, nm, device, K,
+                                              disp_w=args.displacement_w)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(trainable, 1.0)
             opt.step()
-            acc.append((loss.item(), tf, rl, sl))
+            acc.append((loss.item(), tf, rl, sl, dl))
         sched.step()
         model.eval(); vacc = []
         with torch.no_grad():
             for b in va:
-                loss, tf, rl, sl = ar_forward(model, sigreg, b, n_nodes, ni, nm, device, K)
-                vacc.append((loss.item(), tf, rl, sl))
+                loss, tf, rl, sl, dl = ar_forward(model, sigreg, b, n_nodes, ni, nm, device, K,
+                                                  disp_w=args.displacement_w)
+                vacc.append((loss.item(), tf, rl, sl, dl))
             # latent health: per-dim std on a val batch
             b0 = next(iter(va))
             info = {"state": b0["state"].to(device), "action": b0["action"].to(device), "n_nodes": n_nodes}
@@ -207,11 +252,14 @@ def main():
         wb.log({"epoch": ep, "lr": sched.get_last_lr()[0], "z_std": zstd,
                 "train/loss": acc[:, 0].mean(), "train/tf_loss": acc[:, 1].mean(),
                 "train/roll_loss": acc[:, 2].mean(), "train/sigreg": acc[:, 3].mean(),
+                "train/disp_loss": acc[:, 4].mean(),
                 "val/loss": vacc[:, 0].mean(), "val/tf_loss": vacc[:, 1].mean(),
-                "val/roll_loss": vacc[:, 2].mean(), "epoch_s": time.time() - t0})
+                "val/roll_loss": vacc[:, 2].mean(), "val/disp_loss": vacc[:, 4].mean(),
+                "epoch_s": time.time() - t0})
         if ep == 1 or ep % 10 == 0 or ep == args.epochs:
-            print(f"ep {ep:>3} | train {acc[:,0].mean():.4f} (tf {acc[:,1].mean():.4f} roll {acc[:,2].mean():.4f}) "
-                  f"| val (tf {vacc[:,1].mean():.4f} roll {vacc[:,2].mean():.4f}) | z-std {zstd:.3f} | {time.time()-t0:.1f}s")
+            print(f"ep {ep:>3} | train {acc[:,0].mean():.4f} (tf {acc[:,1].mean():.4f} roll {acc[:,2].mean():.4f} "
+                  f"disp {acc[:,4].mean():.4f}) | val (tf {vacc[:,1].mean():.4f} roll {vacc[:,2].mean():.4f}) "
+                  f"| z-std {zstd:.3f} | {time.time()-t0:.1f}s")
         if ep % args.save_every == 0 or ep == args.epochs:
             torch.save({"model_state": model.state_dict(),
                         "cfg": {"node_F": node_F, "node_A": node_A, "level": args.level,

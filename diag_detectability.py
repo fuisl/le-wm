@@ -40,7 +40,41 @@ from diag_exploitation_coverage import build_coverage_bank, knn_dist
 from traffic.sumo_multi_env import SumoMultiEnv, controller_max_pressure
 
 DATA_DIR = "traffic_data_cologne8"
-ENSEMBLE = ["L05ar", "L0ar", "L0ar_v2", "L05ar_v2"]     # all edge_dim 0
+# default = the old heterogeneous-checkpoint set (#4 fast cut). Pass --ensemble
+# L05ar_bs1001 L05ar_bs2002 ... for the #4-proper seed-only bootstrap ensemble.
+ENSEMBLE = ["L05ar", "L0ar", "L0ar_v2", "L05ar_v2"]
+
+
+def build_joint_bank(model, path, n_nodes, ni, nm, device):
+    """One row per training timestep: the JOINT latent = per-node latents concatenated
+    in node order (N*d), per-dim standardised. Used to score whether a candidate plan's
+    joint configuration (not each agent in isolation) is covered by training."""
+    data = torch.load(path, weights_only=False)
+    Zs = []
+    with torch.no_grad():
+        for ep in data["episodes"]:
+            st = torch.from_numpy(ep["state"]).unsqueeze(0).float()
+            ac = torch.from_numpy(ep["action"]).unsqueeze(0).float()
+            out = encode_batch(model, st, ac, n_nodes, ni, nm, device)
+            T = st.shape[1]
+            z = out["emb"].reshape(1, n_nodes, T, -1)[0].permute(1, 0, 2)   # (T,N,d)
+            Zs.append(z.reshape(T, -1).cpu())                                # (T, N*d)
+    Z = torch.cat(Zs).float()
+    mu, sd = Z.mean(0), Z.std(0).clamp(min=1e-6)
+    Z = (Z - mu) / sd
+    print(f"  [joint bank] {Z.shape[0]} timestep rows, dim={Z.shape[1]} (= N*d)")
+    return Z.to(device), mu, sd
+
+
+def bootstrap_ci(values, n_boot=2000, alpha=0.05, seed=0):
+    """percentile bootstrap CI of the mean of `values` (a 1-D array)."""
+    v = np.asarray(values, float)
+    v = v[np.isfinite(v)]
+    if len(v) < 3:
+        return (float("nan"), float("nan"))
+    rng = np.random.default_rng(seed)
+    means = v[rng.integers(0, len(v), size=(n_boot, len(v)))].mean(1)
+    return (float(np.quantile(means, alpha / 2)), float(np.quantile(means, 1 - alpha / 2)))
 
 
 def onehot(idx, P):
@@ -53,6 +87,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--primary", default="L05ar")
     ap.add_argument("--weights", default="weights_epoch_80.pt")
+    ap.add_argument("--ensemble", nargs="+", default=ENSEMBLE,
+                    help="run names for the disagreement ensemble; pass the L05ar_bs* "
+                         "seed-only runs for the #4-proper bootstrap ensemble")
+    ap.add_argument("--tag", default="", help="suffix for output filenames")
     ap.add_argument("--seeds", type=int, nargs="+", default=[777, 101])
     ap.add_argument("--n_steps", type=int, default=25)
     ap.add_argument("--warmup", type=int, default=10)
@@ -76,11 +114,14 @@ def main():
 
     # ensemble members + their probes
     ens = []
-    for name in ENSEMBLE:
+    for name in args.ensemble:
         m, _ = load(name, args.weights, device)
         p = fit_pressure_probe(m, f"{DATA_DIR}/train.pt", n, P, F, ni, nm, device)
         ens.append((name, m, p))
-    print(f"ensemble: {[e[0] for e in ens]}")
+    print(f"ensemble ({len(ens)}): {[e[0] for e in ens]}")
+
+    # joint-configuration bank (primary) for the MA-specificity signal
+    Zj, MUj, SDj = build_joint_bank(prim, f"{DATA_DIR}/train.pt", n, ni, nm, device)
 
     # coverage bank (primary) + GMM on (z, onehot(action)) + 1-step displacement stats
     Zb, PHb, MU, SD, _ = build_coverage_bank(prim, f"{DATA_DIR}/train.pt", n, F, P, ni, nm, device)
@@ -168,6 +209,12 @@ def main():
                 if mk.any():
                     dd[mk] = knn_dist(((zc[mk] - MU) / SD), Zb_by_phase[ph], k=args.k)
             cov_seq = dd.reshape(S, n, H).mean((1, 2)).numpy()
+            # cov_joint: kNN dist of the JOINT rollout config (concat over agents) to the
+            # joint training bank. cov_seq above averages per-agent coverage; this asks
+            # whether the *combination* of agent states/phases is jointly covered.
+            zj = pe.permute(0, 2, 1, 3).reshape(S, H, n * pe.shape[-1])       # (S,H,N*d)
+            zj = ((zj.reshape(S * H, -1).cpu() - MUj.cpu()) / SDj.cpu())
+            cov_joint = knn_dist(zj, Zj, k=args.k).reshape(S, H).mean(1).numpy()
 
             # --- oracle ---
             snap = env.save_state(f"_det_snap_{os.getpid()}_{seed}.xml")
@@ -190,7 +237,8 @@ def main():
                                  regret=float(regret[s]), optimism=float(optimism[s]),
                                  ens_disagree=float(ens_dis[s]), gmm_ood=float(gm[s]),
                                  disp_norm=float(disp[s]), frac_clipped=float(frac_clip[s]),
-                                 n_switch0=int(nsw0[s]), cov_seq=float(cov_seq[s])))
+                                 n_switch0=int(nsw0[s]), cov_seq=float(cov_seq[s]),
+                                 cov_agent=float(cov_seq[s]), cov_joint=float(cov_joint[s])))
 
             exec_phase = probs[:, 0].argmax(1)
             actions.append(env.encode_action(np.clip(exec_phase, 0, P - 1)))
@@ -204,32 +252,69 @@ def main():
 
 def analyse(rows, args):
     import csv
-    sigs = ["ens_disagree", "gmm_ood", "disp_norm", "frac_clipped", "n_switch0", "cov_seq"]
+    sigs = ["ens_disagree", "gmm_ood", "disp_norm", "frac_clipped", "n_switch0",
+            "cov_seq", "cov_agent", "cov_joint"]
     arr = {k: np.array([r[k] for r in rows], float) for k in sigs + ["regret", "optimism", "step", "seed"]}
+    step_keys = sorted(set(zip(arr["seed"].tolist(), arr["step"].tolist())))
 
-    def within(x, y):
+    def within_per_step(x, y):
+        """list of per-decision-step Spearman(x, y) (one value per step)."""
         rs = []
-        for (sd, st) in set(zip(arr["seed"], arr["step"])):
+        for (sd, st) in step_keys:
             m = (arr["seed"] == sd) & (arr["step"] == st)
             if m.sum() >= 10:
                 r = spearmanr(x[m], y[m])[0]
                 if np.isfinite(r):
                     rs.append(r)
-        return float(np.mean(rs)) if rs else float("nan")
+        return np.array(rs)
 
-    print(f"\n=== per-plan regret / |optimism| vs runtime signals  ({len(rows)} plans) ===")
-    print(f"{'signal':>14} {'pool r(regret)':>14} {'within r(regret)':>16} {'within r(|opt|)':>15}")
+    def within(x, y):
+        v = within_per_step(x, y)
+        return float(v.mean()) if len(v) else float("nan")
+
+    print(f"\n=== per-plan regret / |optimism| vs runtime signals  "
+          f"({len(rows)} plans, {len(step_keys)} decision steps, {len(args.seeds)} seeds) ===")
+    print(f"{'signal':>14} {'pool r(regret)':>14} {'within r(regret)':>16} {'95% CI':>18} {'within r(|opt|)':>15}")
     out = {}
     best = ("", 0.0)
     for k in sigs:
         pr_ = pearsonr(arr[k], arr["regret"])[0]
-        wr = within(arr[k], arr["regret"])
+        per_step = within_per_step(arr[k], arr["regret"])
+        wr = float(per_step.mean()) if len(per_step) else float("nan")
+        lo, hi = bootstrap_ci(per_step)
         wo = within(arr[k], arr["optimism"])
         out[k] = dict(pool_pearson_regret=float(pr_), within_spearman_regret=wr,
+                      within_spearman_regret_ci=[lo, hi], n_steps=int(len(per_step)),
                       within_spearman_optimism=wo)
-        print(f"{k:>14} {pr_:>14.3f} {wr:>16.3f} {wo:>15.3f}")
-        if abs(wr) > abs(best[1]):
+        print(f"{k:>14} {pr_:>14.3f} {wr:>16.3f}   [{lo:+.2f},{hi:+.2f}] {wo:>15.3f}")
+        if k not in ("cov_agent",) and abs(wr) > abs(best[1]):   # cov_agent duplicates cov_seq
             best = (k, wr)
+
+    # --- MA-specificity: per-agent-mean coverage vs joint-config coverage ---
+    ca = within_per_step(arr["cov_agent"], arr["regret"])
+    cj = within_per_step(arr["cov_joint"], arr["regret"])
+    d_per_step = cj[:min(len(ca), len(cj))] - ca[:min(len(ca), len(cj))]
+    ca_ci, cj_ci = bootstrap_ci(ca), bootstrap_ci(cj)
+    d_ci = bootstrap_ci(d_per_step)
+    print(f"\n=== MA-specificity: does the JOINT configuration predict regret better than "
+          f"per-agent coverage? ===")
+    print(f"  cov_agent (per-agent-mean)  within r(regret) = {ca.mean():+.3f}  95% CI [{ca_ci[0]:+.2f}, {ca_ci[1]:+.2f}]")
+    print(f"  cov_joint (joint config)    within r(regret) = {cj.mean():+.3f}  95% CI [{cj_ci[0]:+.2f}, {cj_ci[1]:+.2f}]")
+    print(f"  paired difference (joint - agent)          = {d_per_step.mean():+.3f}  95% CI [{d_ci[0]:+.2f}, {d_ci[1]:+.2f}]")
+    if d_ci[0] > 0.05:
+        ma_verdict = ("joint-configuration coverage predicts per-plan regret SUBSTANTIALLY better "
+                      "than per-agent coverage (CI excludes 0) -> concrete factored-structure result: "
+                      "the model's failure is about the joint config, not any agent in isolation.")
+    elif d_ci[1] < -0.05:
+        ma_verdict = "per-agent coverage is the better predictor -> the factored-structure framing is NOT supported."
+    else:
+        ma_verdict = ("joint and per-agent coverage predict regret about equally (difference CI spans 0). "
+                      "No isolable factored-structure effect on THIS axis; neither is gateable anyway.")
+    print(f"  >>> {ma_verdict}")
+    ma_out = dict(cov_agent_r=float(ca.mean()), cov_agent_ci=list(ca_ci),
+                  cov_joint_r=float(cj.mean()), cov_joint_ci=list(cj_ci),
+                  joint_minus_agent=float(d_per_step.mean()), joint_minus_agent_ci=list(d_ci),
+                  verdict=ma_verdict)
 
     # can we gate? fraction of oracle-advantage recoverable by picking the
     # lowest-signal candidate instead of the model's argmin, per step
@@ -260,14 +345,16 @@ def analyse(rows, args):
                    f"stress-tested against ensemble + density + displacement + plausibility")
     print(f"\n>>> VERDICT: {verdict}")
 
-    Path(f"{DATA_DIR}/diag_detectability.json").write_text(json.dumps(dict(
-        primary=args.primary, seeds=args.seeds, n_steps=args.n_steps,
+    tag = f"_{args.tag}" if args.tag else ""
+    Path(f"{DATA_DIR}/diag_detectability{tag}.json").write_text(json.dumps(dict(
+        primary=args.primary, ensemble=args.ensemble, seeds=args.seeds, n_steps=args.n_steps,
+        n_decision_steps=len(step_keys),
         signals=out, gate_sim=gate, best=dict(name=best[0], within_spearman=best[1]),
-        verdict=verdict), indent=2))
-    with open(f"{DATA_DIR}/diag_detectability_rows.csv", "w", newline="") as f:
+        ma_specificity=ma_out, verdict=verdict), indent=2))
+    with open(f"{DATA_DIR}/diag_detectability{tag}_rows.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader(); w.writerows(rows)
-    print(f"wrote {DATA_DIR}/diag_detectability.json (+ _rows.csv)")
+    print(f"wrote {DATA_DIR}/diag_detectability{tag}.json (+ _rows.csv)")
 
 
 if __name__ == "__main__":

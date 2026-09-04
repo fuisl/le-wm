@@ -1,0 +1,21 @@
+{
+  "run": "L05ar",
+  "seeds": [
+    777,
+    101
+  ],
+  "n_steps": 25,
+  "n_plans": 4800,
+  "mean_errA": 56.02741570631663,
+  "mean_errB": 51.98059319893519,
+  "ratio_BA": 0.9277706734039993,
+  "model_contribution_frac": -0.07785256493502919,
+  "rank_A": 0.5392646773070946,
+  "rank_B": -0.02267480204293894,
+  "rank_B_valid_steps": 50,
+  "rank_B_total_steps": 50,
+  "horizon": 2,
+  "top1_A": 0.14,
+  "top1_B": 0.0,
+  "verdict": "the MODEL is the problem, NOT the probe: given TRUE dynamics the probe ranks plans well (Spearman +0.54); the model DESTROYS the ranking (+0.54 -> -0.02). The probe's absolute error is larger (56 vs 52) but rank-preserving; the model's error is rank-destroying."
+}

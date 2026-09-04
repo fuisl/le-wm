@@ -38,7 +38,18 @@ from traffic.sumo_multi_env import (
     controller_max_pressure,
 )
 
-SUMOCFG = "/home/fuisloy/projects/HMARL-TSC/environments/cologne8/cologne8.sumocfg"
+def _resolve_sumocfg():
+    """env SUMOCFG_COLOGNE8 > original HMARL path > RESCO benchmark copy in this repo."""
+    import os
+    for c in (os.environ.get("SUMOCFG_COLOGNE8"),
+              "/home/fuisloy/projects/HMARL-TSC/environments/cologne8/cologne8.sumocfg",
+              "/home/fuisloy/projects/cair/resco/resco_benchmark/environments/cologne8/cologne8.sumocfg"):
+        if c and os.path.exists(c):
+            return c
+    return "/home/fuisloy/projects/HMARL-TSC/environments/cologne8/cologne8.sumocfg"
+
+
+SUMOCFG = _resolve_sumocfg()
 DATA_DIR = "traffic_data_cologne8"
 HS = 3
 
