@@ -231,23 +231,32 @@ Then re-run on each: closed-loop `diag_compounding` (latent-CEM / MaxPressure �
 Closed-loop tail halting, latent-CEM vs MaxPressure vs random, **5 seeds**
 (`diag_compounding.py`, 40 steps):
 
-| model | latent-CEM / MaxPressure | latent-CEM / random | model-pick / random-pick regret | regret drift over episode |
+| model | latent-CEM / MaxPressure | latent / random | regret m/r | regret drift |
 |---|--:|--:|--:|--:|
 | **L05ar** (baseline, 5-seed refresh) | **3.46×** | 0.48× | 0.79 | **+2177** (rises) |
 | **L05ar\_ac\_v1** (freeze enc.\ + coverage data) | **2.10×** | 0.29× | 0.64 | **−1895** (falls) |
-| L05ar\_ac\_v2 (+ Delta-JEPA displacement) | *(running)* | | | |
+| L05ar\_ac\_v2 (+ Delta-JEPA displacement loss) | 2.37× | 0.33× | 0.71 | −1847 (falls) |
 
-**Read:** coverage-aware AC post-training moves the closed-loop gap from
-**3.46× → 2.10×** — it recovers roughly **40 % of the excess over MaxPressure**,
-makes the planner extract more of the oracle-vs-random gain (0.79 → 0.64), and
-*flips the within-episode regret drift from rising to falling* (the AC model does
-not walk itself into worse-modelled regions). But **2.10× still loses clearly to
-a greedy baseline.** Against the decision rule this lands *between* "structural
-negative" and "here is the fix": **a quantified partial fix.** The publishable
-statement is *"training-time coverage recovers ~40 % of the control gap in
-factored latent planning; the residual is not eliminated at this model scale,"*
-which stands as a measured negative and motivates the hierarchy/coupling work.
-v2 (displacement loss; better val rollout: 0.057 vs v1's 0.075) may move it
-further — pending.
+**Read:**
+- **Coverage-aware AC post-training (v1) recovers ~40 % of the excess over
+  MaxPressure** (3.46× → 2.10×), makes the planner extract more of the
+  oracle-vs-random gain (0.79 → 0.64), and **flips the within-episode regret
+  drift from rising to falling** — the AC model does not walk itself into
+  worse-modelled regions.
+- **The Delta-JEPA displacement loss does *not* help planning:** v2 is
+  2.37×, slightly *worse* than v1's 2.10×, despite better 1-step val rollout
+  accuracy (0.057 vs 0.075). Better open-loop prediction ≠ better planning — a
+  value-equivalence-flavoured observation (magnitude accuracy is not the thing
+  that matters for plan ranking).
+- **The gap is not closed at this model scale.** 2.10× still loses clearly to a
+  greedy baseline.
 
-Pending: `results/compounding_L05ar_ac_v2.json`; #1/#3/#4 re-runs on v1 and v2.
+**Verdict (decision rule):** lands *between* "structural negative" (≳2.5×) and
+"here is the fix" (≈1.3×): a **quantified partial fix**. Publishable statement:
+*"coverage-aware training-time post-training recovers ~40 % of the control gap in
+factored latent planning; a displacement/action-sensitivity loss adds nothing;
+the residual is not eliminated at this model scale"* — a measured negative that
+motivates the coupling / hierarchy chapter.
+
+Pending: #1/#3/#4 re-runs on v1 and v2 (do the C1–C3 diagnostics move with the
+better planner?), then pipeline done.
