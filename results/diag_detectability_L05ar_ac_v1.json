@@ -1,0 +1,134 @@
+{
+  "primary": "L05ar_ac_v1",
+  "ensemble": [
+    "L05ar_bs1001",
+    "L05ar_bs2002",
+    "L05ar_bs3003",
+    "L05ar_bs4004"
+  ],
+  "seeds": [
+    777,
+    101,
+    202,
+    303,
+    404
+  ],
+  "n_steps": 25,
+  "solo_agent": -1,
+  "n_decision_steps": 125,
+  "signals": {
+    "ens_disagree": {
+      "pool_pearson_regret": 0.014988795097267808,
+      "within_spearman_regret": 0.02397768679039494,
+      "within_spearman_regret_ci": [
+        0.00187900032780946,
+        0.04480762041878212
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.003391941391941399
+    },
+    "gmm_ood": {
+      "pool_pearson_regret": 0.19728358058506273,
+      "within_spearman_regret": 0.27827937107843265,
+      "within_spearman_regret_ci": [
+        0.24732246952746492,
+        0.30776786231550957
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.017157877118331447
+    },
+    "disp_norm": {
+      "pool_pearson_regret": 0.10048872287262625,
+      "within_spearman_regret": 0.1484016097583654,
+      "within_spearman_regret_ci": [
+        0.11475236284432071,
+        0.1827288462580319
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.01326336996336996
+    },
+    "frac_clipped": {
+      "pool_pearson_regret": -0.13810618906643216,
+      "within_spearman_regret": -0.09598490427569689,
+      "within_spearman_regret_ci": [
+        -0.12497649112037855,
+        -0.06695052037528289
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.00018404410685491537
+    },
+    "n_switch0": {
+      "pool_pearson_regret": 0.12914073281318433,
+      "within_spearman_regret": 0.17565823773982467,
+      "within_spearman_regret_ci": [
+        0.13316797682987871,
+        0.2157100097825502
+      ],
+      "n_steps": 123,
+      "within_spearman_optimism": 0.01796817260541584
+    },
+    "cov_seq": {
+      "pool_pearson_regret": 0.15164898086963896,
+      "within_spearman_regret": 0.2062426228661047,
+      "within_spearman_regret_ci": [
+        0.17903232372759542,
+        0.2343090930695665
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.023529304029304036
+    },
+    "cov_agent": {
+      "pool_pearson_regret": 0.15164898086963896,
+      "within_spearman_regret": 0.2062426228661047,
+      "within_spearman_regret_ci": [
+        0.17903232372759542,
+        0.2343090930695665
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.023529304029304036
+    },
+    "cov_joint": {
+      "pool_pearson_regret": 0.12059284227163308,
+      "within_spearman_regret": 0.19579795637452663,
+      "within_spearman_regret_ci": [
+        0.16388952239902901,
+        0.2272851144753569
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.017732776941155347
+    }
+  },
+  "gate_sim": {
+    "ens_disagree": 0.07113022110149295,
+    "gmm_ood": 0.22407763986138496,
+    "disp_norm": 0.08408497318859107,
+    "frac_clipped": -0.1559524987386616,
+    "n_switch0": 0.12316171459627617,
+    "cov_seq": 0.2225148462517867,
+    "cov_agent": 0.2225148462517867,
+    "cov_joint": 0.290606837718251
+  },
+  "best": {
+    "name": "gmm_ood",
+    "within_spearman": 0.27827937107843265
+  },
+  "ma_specificity": {
+    "cov_agent_r": 0.2062426228661047,
+    "cov_agent_ci": [
+      0.17903232372759542,
+      0.2343090930695665
+    ],
+    "cov_joint_r": 0.19579795637452663,
+    "cov_joint_ci": [
+      0.16388952239902901,
+      0.2272851144753569
+    ],
+    "joint_minus_agent": -0.010444666491578054,
+    "joint_minus_agent_ci": [
+      -0.04706654931397716,
+      0.025843555548729562
+    ],
+    "verdict": "joint and per-agent coverage predict regret about equally (paired-difference 95% CI spans 0). No isolable factored-structure effect on this axis; neither is gateable anyway."
+  },
+  "verdict": "NEGATIVE HOLDS: no signal exceeds |within-step Spearman| 0.35 (best gmm_ood = +0.28) -> plan-level error is not runtime-detectable, stress-tested against ensemble + density + displacement + plausibility"
+}

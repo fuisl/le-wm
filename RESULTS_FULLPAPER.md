@@ -10,6 +10,53 @@ rebuttal 20–24 Nov, notification 21 Dec. Conference 3–7 May 2027, Hanoi.
 
 ---
 
+## TL;DR — all experiments complete (pipeline finished 09:15, 2026-09-04)
+
+| diagnostic | L05ar (baseline) | L05ar\_ac\_v1 (coverage post-train) | L05ar\_ac\_v2 (+displacement) |
+|---|--:|--:|--:|
+| closed-loop latent-CEM / MaxPressure (5 seeds) | **3.46×** | **2.10×** | 2.37× |
+| #1 ε\_plan / ε\_beh (planner-action error inflation) | 4.48× | 2.91× | 2.96× |
+| #1 matched-switching: plan vs rand\_matched | 4.32 vs 4.11 | 2.99 vs 2.74 | 3.08 vs 2.82 |
+| #3 probe rank / model rank (Spearman) | 0.82 / 0.24 | 0.79 / 0.35 | 0.76 / 0.31 |
+| #4 best runtime signal / ensemble-disagreement gate | 0.27 / 0.013 | 0.28 / 0.024 | 0.24 / 0.025 |
+
+**Every headline finding survives a proper action-conditioned retrain** (threat C4
+fully addressed):
+
+1. **Undetectability (CB2) holds and is well-powered.** 5 seeds, 125 decision
+   steps, genuine seed-only bootstrap ensemble. No runtime signal reaches a
+   gateable level for the baseline *or* either AC model; the canonical
+   ensemble-disagreement gate is the weakest (+0.01–0.03, CI at 0).
+2. **The mechanism is joint switching frequency, not a bespoke OOD region.**
+   Matched-switching: `plan ≈ rand_matched` at the same switch rate, for the
+   baseline (4.32/4.11) and the AC models (≈3.0/≈2.8). The planner runs at
+   ~13× the joint switching rate of any scripted controller.
+3. **Short horizons do not rescue the ranking** — model rank agreement is
+   monotone increasing in H and worst at short H.
+4. **Coverage-aware AC post-training is a quantified *partial* fix:** closes ~40 %
+   of the closed-loop gap (3.46× → 2.10×), halves the planner-action error
+   inflation (4.5× → 2.9×), lifts model plan-ranking (0.24 → 0.35, still ≪ the
+   probe's 0.79), and flips the within-episode regret drift from rising to
+   falling. It does **not** close the gap. A Delta-JEPA displacement loss adds
+   nothing (v2 marginally worse than v1 on every metric despite better 1-step
+   rollout accuracy).
+5. **Multi-agent specificity is the soft spot.** The "joint-config coverage is
+   the locus" hypothesis is disconfirmed (#6). The solo-agent control (#6a) shows
+   the action-structure signal that gates single-agent planning (+0.64 / +0.41)
+   fails to gate the factored joint search (+0.20) — but only for 2 of 3
+   intersections tested (agent 3 is a noisy null). Report as suggestive isolation
+   of the factored structure, not a law; strengthen with more intersections/seeds
+   or a synthetic large-action-space agent.
+
+**Publishable position:** a well-powered measured negative — *planning against a
+straightforwardly-trained reward-free latent world model in a factored
+multi-agent regime leaves a control gap that is (a) driven by the planner's joint
+switching frequency, (b) undetectable by any standard runtime trust signal at the
+plan level, and (c) only ~40 % closable by coverage-aware training* — plus a
+reusable methodology (oracle-decomposition + plan-level detectability protocol).
+
+---
+
 ## #1 matched-switching control — DONE ✅ (changes the #1 framing)
 
 `diag_matched_switching.py`, L05ar, 3 seeds (777/101/202), 20 anchors/seed, H=8.

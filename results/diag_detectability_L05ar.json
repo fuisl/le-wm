@@ -1,0 +1,134 @@
+{
+  "primary": "L05ar",
+  "ensemble": [
+    "L05ar_bs1001",
+    "L05ar_bs2002",
+    "L05ar_bs3003",
+    "L05ar_bs4004"
+  ],
+  "seeds": [
+    777,
+    101,
+    202,
+    303,
+    404
+  ],
+  "n_steps": 25,
+  "solo_agent": -1,
+  "n_decision_steps": 125,
+  "signals": {
+    "ens_disagree": {
+      "pool_pearson_regret": 0.011438514164633198,
+      "within_spearman_regret": 0.012955309053664843,
+      "within_spearman_regret_ci": [
+        -0.00993668236704424,
+        0.03415894589288304
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.01115787545787546
+    },
+    "gmm_ood": {
+      "pool_pearson_regret": 0.23223955536332536,
+      "within_spearman_regret": 0.24924766436192985,
+      "within_spearman_regret_ci": [
+        0.2234773306512299,
+        0.27557198200784333
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.025008064428040728
+    },
+    "disp_norm": {
+      "pool_pearson_regret": 0.1781199508756036,
+      "within_spearman_regret": 0.2183884825623011,
+      "within_spearman_regret_ci": [
+        0.189643739052531,
+        0.2466681215617336
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.0023681581502989833
+    },
+    "frac_clipped": {
+      "pool_pearson_regret": -0.08982788671657885,
+      "within_spearman_regret": 0.013372573846119725,
+      "within_spearman_regret_ci": [
+        -0.018234189083299917,
+        0.04314613338031121
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": -0.016152216487582145
+    },
+    "n_switch0": {
+      "pool_pearson_regret": 0.1486783714908146,
+      "within_spearman_regret": 0.1951266513873824,
+      "within_spearman_regret_ci": [
+        0.15047011672128568,
+        0.2356753070176353
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 1.5305623944426028e-06
+    },
+    "cov_seq": {
+      "pool_pearson_regret": 0.2660552553915583,
+      "within_spearman_regret": 0.2692031865865731,
+      "within_spearman_regret_ci": [
+        0.23730362344133168,
+        0.29848391423845494
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.030857875457875453
+    },
+    "cov_agent": {
+      "pool_pearson_regret": 0.2660552553915583,
+      "within_spearman_regret": 0.2692031865865731,
+      "within_spearman_regret_ci": [
+        0.23730362344133168,
+        0.29848391423845494
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.030857875457875453
+    },
+    "cov_joint": {
+      "pool_pearson_regret": 0.07273054332880355,
+      "within_spearman_regret": 0.11347990563212153,
+      "within_spearman_regret_ci": [
+        0.08548712520982012,
+        0.1395567377167235
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.024799999999999992
+    }
+  },
+  "gate_sim": {
+    "ens_disagree": 0.08311380807831174,
+    "gmm_ood": 0.2848367054064285,
+    "disp_norm": 0.19567749879247373,
+    "frac_clipped": -0.005646221864043386,
+    "n_switch0": 0.283179751675857,
+    "cov_seq": 0.3517905588589863,
+    "cov_agent": 0.3517905588589863,
+    "cov_joint": 0.12585728614507938
+  },
+  "best": {
+    "name": "cov_seq",
+    "within_spearman": 0.2692031865865731
+  },
+  "ma_specificity": {
+    "cov_agent_r": 0.2692031865865731,
+    "cov_agent_ci": [
+      0.23730362344133168,
+      0.29848391423845494
+    ],
+    "cov_joint_r": 0.11347990563212153,
+    "cov_joint_ci": [
+      0.08548712520982012,
+      0.1395567377167235
+    ],
+    "joint_minus_agent": -0.15572328095445154,
+    "joint_minus_agent_ci": [
+      -0.18481388430114473,
+      -0.1269428292829726
+    ],
+    "verdict": "per-agent-mean coverage predicts per-plan regret better than the joint config (paired-difference 95% CI excludes 0) -> the 'the joint structure is what the model gets wrong' framing is NOT supported on this axis."
+  },
+  "verdict": "NEGATIVE HOLDS: no signal exceeds |within-step Spearman| 0.35 (best cov_seq = +0.27) -> plan-level error is not runtime-detectable, stress-tested against ensemble + density + displacement + plausibility"
+}

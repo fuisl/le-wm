@@ -1,0 +1,134 @@
+{
+  "primary": "L05ar_ac_v2",
+  "ensemble": [
+    "L05ar_bs1001",
+    "L05ar_bs2002",
+    "L05ar_bs3003",
+    "L05ar_bs4004"
+  ],
+  "seeds": [
+    777,
+    101,
+    202,
+    303,
+    404
+  ],
+  "n_steps": 25,
+  "solo_agent": -1,
+  "n_decision_steps": 125,
+  "signals": {
+    "ens_disagree": {
+      "pool_pearson_regret": 0.046690742749760705,
+      "within_spearman_regret": 0.0253021011512488,
+      "within_spearman_regret_ci": [
+        0.003796493859489994,
+        0.04631742765921626
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.018735164835164828
+    },
+    "gmm_ood": {
+      "pool_pearson_regret": 0.17906351114701496,
+      "within_spearman_regret": 0.23987484881030083,
+      "within_spearman_regret_ci": [
+        0.21051705023527287,
+        0.2699344533113167
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.03146446886446886
+    },
+    "disp_norm": {
+      "pool_pearson_regret": 0.10546453544867142,
+      "within_spearman_regret": 0.13441723478266068,
+      "within_spearman_regret_ci": [
+        0.10328687895403846,
+        0.16698878088471664
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": -0.02812854866858369
+    },
+    "frac_clipped": {
+      "pool_pearson_regret": -0.11365121876316564,
+      "within_spearman_regret": 0.007108374637843101,
+      "within_spearman_regret_ci": [
+        -0.02371751552600958,
+        0.03928234296278011
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.013720712152652307
+    },
+    "n_switch0": {
+      "pool_pearson_regret": 0.132928155799593,
+      "within_spearman_regret": 0.15509342282232272,
+      "within_spearman_regret_ci": [
+        0.1157880822938691,
+        0.193774053945173
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": -0.005465814152441039
+    },
+    "cov_seq": {
+      "pool_pearson_regret": 0.1399829065268008,
+      "within_spearman_regret": 0.18498724341694558,
+      "within_spearman_regret_ci": [
+        0.15940875550714353,
+        0.2109866449700845
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.018175457875457872
+    },
+    "cov_agent": {
+      "pool_pearson_regret": 0.1399829065268008,
+      "within_spearman_regret": 0.18498724341694558,
+      "within_spearman_regret_ci": [
+        0.15940875550714353,
+        0.2109866449700845
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.018175457875457872
+    },
+    "cov_joint": {
+      "pool_pearson_regret": 0.01563535677267805,
+      "within_spearman_regret": 0.14309323431120788,
+      "within_spearman_regret_ci": [
+        0.11142964411345314,
+        0.17493006644931725
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.026394521444946417
+    }
+  },
+  "gate_sim": {
+    "ens_disagree": 0.04455483174286354,
+    "gmm_ood": 0.2831245055251741,
+    "disp_norm": 0.1603544238997951,
+    "frac_clipped": -0.03863323805087023,
+    "n_switch0": 0.12661246400644408,
+    "cov_seq": 0.15928553546171562,
+    "cov_agent": 0.15928553546171562,
+    "cov_joint": 0.2253769585729314
+  },
+  "best": {
+    "name": "gmm_ood",
+    "within_spearman": 0.23987484881030083
+  },
+  "ma_specificity": {
+    "cov_agent_r": 0.18498724341694558,
+    "cov_agent_ci": [
+      0.15940875550714353,
+      0.2109866449700845
+    ],
+    "cov_joint_r": 0.14309323431120788,
+    "cov_joint_ci": [
+      0.11142964411345314,
+      0.17493006644931725
+    ],
+    "joint_minus_agent": -0.041894009105737665,
+    "joint_minus_agent_ci": [
+      -0.08095033680727522,
+      -0.004213310486262287
+    ],
+    "verdict": "per-agent-mean coverage predicts per-plan regret better than the joint config (paired-difference 95% CI excludes 0) -> the 'the joint structure is what the model gets wrong' framing is NOT supported on this axis."
+  },
+  "verdict": "NEGATIVE HOLDS: no signal exceeds |within-step Spearman| 0.35 (best gmm_ood = +0.24) -> plan-level error is not runtime-detectable, stress-tested against ensemble + density + displacement + plausibility"
+}

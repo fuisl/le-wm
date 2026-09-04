@@ -1,0 +1,24 @@
+{
+  "run": "L05ar",
+  "seeds": [
+    777,
+    101,
+    202,
+    303,
+    404
+  ],
+  "n_steps": 40,
+  "mean_regret_model": 100.21875,
+  "mean_regret_random": 126.9845703125,
+  "model_over_random": 0.7892199009106348,
+  "regret_slope": 0.7022360703812313,
+  "regret_total_drift": 21.769318181818168,
+  "cov_slope": 0.004498178764626031,
+  "eps_slope": -0.0008437978753770961,
+  "spearman_cov_regret": 0.044053315365120936,
+  "spearman_eps_regret": 0.26561497469098394,
+  "tail_latent": 3074.4,
+  "tail_random": 6472.0,
+  "tail_mp": 888.2,
+  "verdict": "WEAKLY-INFORMATIVE MODEL, NO CLEAR COMPOUNDING: model beats random, regret does not trend up -> the closed-loop gap is not a compounding story"
+}

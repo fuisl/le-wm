@@ -1,0 +1,134 @@
+{
+  "primary": "L05ar",
+  "ensemble": [
+    "L05ar_bs1001",
+    "L05ar_bs2002",
+    "L05ar_bs3003",
+    "L05ar_bs4004"
+  ],
+  "seeds": [
+    777,
+    101,
+    202,
+    303,
+    404
+  ],
+  "n_steps": 25,
+  "solo_agent": 0,
+  "n_decision_steps": 125,
+  "signals": {
+    "ens_disagree": {
+      "pool_pearson_regret": 0.05527305124700493,
+      "within_spearman_regret": 0.0227742147182513,
+      "within_spearman_regret_ci": [
+        -0.07852499182315645,
+        0.1207632107986775
+      ],
+      "n_steps": 55,
+      "within_spearman_optimism": 0.3096774422520354
+    },
+    "gmm_ood": {
+      "pool_pearson_regret": -0.12561427991823615,
+      "within_spearman_regret": 0.2188528422037264,
+      "within_spearman_regret_ci": [
+        0.17168892369712374,
+        0.2654385970598314
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": -0.015371238205148938
+    },
+    "disp_norm": {
+      "pool_pearson_regret": -0.040203587312118254,
+      "within_spearman_regret": 0.2967613538740785,
+      "within_spearman_regret_ci": [
+        0.19818917584230816,
+        0.39723913324516313
+      ],
+      "n_steps": 55,
+      "within_spearman_optimism": -0.04406343154286299
+    },
+    "frac_clipped": {
+      "pool_pearson_regret": -0.17147255590805127,
+      "within_spearman_regret": 0.060307695090772676,
+      "within_spearman_regret_ci": [
+        -0.07242171085893727,
+        0.19214142568356615
+      ],
+      "n_steps": 46,
+      "within_spearman_optimism": -0.013668882400817251
+    },
+    "n_switch0": {
+      "pool_pearson_regret": 0.12148328641878015,
+      "within_spearman_regret": 0.6352622962195388,
+      "within_spearman_regret_ci": [
+        0.49338686321220354,
+        0.766947479561135
+      ],
+      "n_steps": 9,
+      "within_spearman_optimism": 0.03582062247665204
+    },
+    "cov_seq": {
+      "pool_pearson_regret": 0.13956036786085643,
+      "within_spearman_regret": 0.24517992667877514,
+      "within_spearman_regret_ci": [
+        0.19068249522944014,
+        0.2994419147332068
+      ],
+      "n_steps": 121,
+      "within_spearman_optimism": -0.002202494355270766
+    },
+    "cov_agent": {
+      "pool_pearson_regret": 0.13956036786085643,
+      "within_spearman_regret": 0.24517992667877514,
+      "within_spearman_regret_ci": [
+        0.19068249522944014,
+        0.2994419147332068
+      ],
+      "n_steps": 121,
+      "within_spearman_optimism": -0.002202494355270766
+    },
+    "cov_joint": {
+      "pool_pearson_regret": 0.06993447738868662,
+      "within_spearman_regret": 0.29034651212276075,
+      "within_spearman_regret_ci": [
+        0.19092802459580382,
+        0.3852678160409755
+      ],
+      "n_steps": 55,
+      "within_spearman_optimism": -0.06038512866274473
+    }
+  },
+  "gate_sim": {
+    "ens_disagree": 0.07057753732568774,
+    "gmm_ood": 0.1945243120341342,
+    "disp_norm": 0.16744664657106745,
+    "frac_clipped": -0.022515593484021757,
+    "n_switch0": 0.03382096637668431,
+    "cov_seq": 0.24615075664491945,
+    "cov_agent": 0.24615075664491945,
+    "cov_joint": 0.12230157570253337
+  },
+  "best": {
+    "name": "n_switch0",
+    "within_spearman": 0.6352622962195388
+  },
+  "ma_specificity": {
+    "cov_agent_r": 0.24517992667877514,
+    "cov_agent_ci": [
+      0.19068249522944014,
+      0.2994419147332068
+    ],
+    "cov_joint_r": 0.29034651212276075,
+    "cov_joint_ci": [
+      0.19092802459580382,
+      0.3852678160409755
+    ],
+    "joint_minus_agent": -0.0009479032230090258,
+    "joint_minus_agent_ci": [
+      -0.12526595193390866,
+      0.12505054635819812
+    ],
+    "verdict": "joint and per-agent coverage predict regret about equally (paired-difference 95% CI spans 0). No isolable factored-structure effect on this axis; neither is gateable anyway."
+  },
+  "verdict": "DETECTABILITY SIGNAL FOUND: ['n_switch0'] exceed |within-step Spearman| 0.35 -> the 'undetectable' claim needs revision; pivot toward a gate"
+}

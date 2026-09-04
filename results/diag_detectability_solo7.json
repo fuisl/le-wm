@@ -1,0 +1,134 @@
+{
+  "primary": "L05ar",
+  "ensemble": [
+    "L05ar_bs1001",
+    "L05ar_bs2002",
+    "L05ar_bs3003",
+    "L05ar_bs4004"
+  ],
+  "seeds": [
+    777,
+    101,
+    202,
+    303,
+    404
+  ],
+  "n_steps": 25,
+  "solo_agent": 7,
+  "n_decision_steps": 125,
+  "signals": {
+    "ens_disagree": {
+      "pool_pearson_regret": 0.10670962252193823,
+      "within_spearman_regret": 0.10963058944436527,
+      "within_spearman_regret_ci": [
+        -0.015051215594601519,
+        0.22924252910337412
+      ],
+      "n_steps": 57,
+      "within_spearman_optimism": 0.2344250971360537
+    },
+    "gmm_ood": {
+      "pool_pearson_regret": -0.14609018993405581,
+      "within_spearman_regret": 0.1644835480509756,
+      "within_spearman_regret_ci": [
+        0.11386459340799149,
+        0.21913840945611882
+      ],
+      "n_steps": 125,
+      "within_spearman_optimism": 0.008439701309737153
+    },
+    "disp_norm": {
+      "pool_pearson_regret": 0.17669345124212849,
+      "within_spearman_regret": 0.23813222678049578,
+      "within_spearman_regret_ci": [
+        0.12150894695820581,
+        0.34708761465024895
+      ],
+      "n_steps": 57,
+      "within_spearman_optimism": 0.09956032824083935
+    },
+    "frac_clipped": {
+      "pool_pearson_regret": -0.17793421217212926,
+      "within_spearman_regret": 0.10066656941703914,
+      "within_spearman_regret_ci": [
+        -0.022740593839388534,
+        0.21349465829117723
+      ],
+      "n_steps": 53,
+      "within_spearman_optimism": -0.03143534835538887
+    },
+    "n_switch0": {
+      "pool_pearson_regret": -0.010182465797707724,
+      "within_spearman_regret": 0.4107016496505111,
+      "within_spearman_regret_ci": [
+        0.08826994365133584,
+        0.6800720528227608
+      ],
+      "n_steps": 11,
+      "within_spearman_optimism": 0.18653389649358038
+    },
+    "cov_seq": {
+      "pool_pearson_regret": -0.01751411689702415,
+      "within_spearman_regret": 0.1594135025651842,
+      "within_spearman_regret_ci": [
+        0.10800846320515348,
+        0.20982533504347148
+      ],
+      "n_steps": 115,
+      "within_spearman_optimism": -0.016804409775645398
+    },
+    "cov_agent": {
+      "pool_pearson_regret": -0.01751411689702415,
+      "within_spearman_regret": 0.1594135025651842,
+      "within_spearman_regret_ci": [
+        0.10800846320515348,
+        0.20982533504347148
+      ],
+      "n_steps": 115,
+      "within_spearman_optimism": -0.016804409775645398
+    },
+    "cov_joint": {
+      "pool_pearson_regret": -0.04681156193159257,
+      "within_spearman_regret": 0.26706322375989683,
+      "within_spearman_regret_ci": [
+        0.15154347984142766,
+        0.3731676511740961
+      ],
+      "n_steps": 57,
+      "within_spearman_optimism": 0.025315339661770936
+    }
+  },
+  "gate_sim": {
+    "ens_disagree": 0.12414409259190086,
+    "gmm_ood": 0.14527259560780223,
+    "disp_norm": 0.14528089872413505,
+    "frac_clipped": 0.005168492753798923,
+    "n_switch0": 0.13717318794088576,
+    "cov_seq": 0.21005860227710624,
+    "cov_agent": 0.21005860227710624,
+    "cov_joint": 0.17369304602214397
+  },
+  "best": {
+    "name": "n_switch0",
+    "within_spearman": 0.4107016496505111
+  },
+  "ma_specificity": {
+    "cov_agent_r": 0.1594135025651842,
+    "cov_agent_ci": [
+      0.10800846320515348,
+      0.20982533504347148
+    ],
+    "cov_joint_r": 0.26706322375989683,
+    "cov_joint_ci": [
+      0.15154347984142766,
+      0.3731676511740961
+    ],
+    "joint_minus_agent": 0.1512920573573212,
+    "joint_minus_agent_ci": [
+      0.006656204023929981,
+      0.2869449079268307
+    ],
+    "verdict": "joint-configuration coverage predicts per-plan regret better than per-agent coverage (paired-difference 95% CI excludes 0) -> concrete factored-structure result: the model's failure is about the joint config, not any agent in isolation. (joint +0.27 vs agent +0.16; both still below a gateable ~0.5)"
+  },
+  "verdict": "DETECTABILITY SIGNAL FOUND: ['n_switch0'] exceed |within-step Spearman| 0.35 -> the 'undetectable' claim needs revision; pivot toward a gate"
+}
