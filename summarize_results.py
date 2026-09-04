@@ -76,15 +76,21 @@ for f in sorted(glob.glob(f"{R}/diag_detectability_*.json")):
 
 # ---------- compounding / closed-loop (#7 pivotal) ----------
 sec("Closed-loop latent-CEM vs MaxPressure  (#7 pivotal number)")
+print(f"{'model':>16} {'tail_latent':>12} {'tail_mp':>10} {'latent/MP':>11} "
+      f"{'latent/rand':>12} {'regret m/r':>11} {'drift%':>8}")
 for f in sorted(glob.glob(f"{R}/compounding_*.json")):
     d = load(f)
-    print(f"\n[{os.path.basename(f)}]")
-    for k in ("run", "tail_latent", "tail_random", "tail_mp",
-              "ratio_latent_mp", "ratio_latent_random", "regret_model_over_random",
-              "compounding_pct", "verdict"):
-        if k in d:
-            v = d[k]
-            print(f"  {k:>24}: {v if not isinstance(v,float) else round(v,3)}")
+    if "tail_latent" not in d:
+        print(f"  [{os.path.basename(f)}] {d.get('_error','(no tail data)')}")
+        continue
+    tl, tm, tr = d["tail_latent"], d["tail_mp"], d["tail_random"]
+    lat_mp = tl / tm if tm else float("nan")
+    lat_rand = tl / tr if tr else float("nan")
+    mr = d.get("model_over_random", float("nan"))
+    drift = d.get("regret_total_drift", float("nan"))
+    print(f"{d.get('run',''):>16} {tl:>12.0f} {tm:>10.0f} {lat_mp:>11.2f} "
+          f"{lat_rand:>12.2f} {mr:>11.2f} {drift*100 if drift==drift else drift:>8.0f}")
+    print(f"{'':>16} verdict: {d.get('verdict','')[:150]}")
 
 # ---------- probe-vs-model / plan-vs-beh on AC models ----------
 sec("AC-model re-runs  (probe-vs-model #3, plan-vs-beh #1)")
