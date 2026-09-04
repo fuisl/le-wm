@@ -91,6 +91,12 @@ def main():
                     help="run names for the disagreement ensemble; pass the L05ar_bs* "
                          "seed-only runs for the #4-proper bootstrap ensemble")
     ap.add_argument("--tag", default="", help="suffix for output filenames")
+    ap.add_argument("--solo_agent", type=int, default=-1,
+                    help="MA-specificity control: if >=0, only this intersection's H-step "
+                         "phase sequence is planned (space P^H, ~matched to the 8-agent joint "
+                         "space); all other signals hold their current phase. Detectability "
+                         "here vs the full joint search isolates whether it is the FACTORED "
+                         "joint structure or just a large action space that defeats detection.")
     ap.add_argument("--seeds", type=int, nargs="+", default=[777, 101])
     ap.add_argument("--n_steps", type=int, default=25)
     ap.add_argument("--warmup", type=int, default=10)
@@ -171,6 +177,10 @@ def main():
                 for i in range(n):
                     for h in range(H):
                         phases[:, i, h] = rng.choice(P, size=S, p=probs[i, h])
+                if args.solo_agent >= 0:
+                    for i in range(n):
+                        if i != args.solo_agent:
+                            phases[:, i, :] = cur[i]          # non-planned signals hold
                 pe = roll_member(prim, z_ctx, a_ctx, phases)
                 mc = decode(pr, pe).clamp(min=0).sum(dim=(1, 2, 3)).cpu().numpy()
                 elite = phases[np.argsort(mc)[: args.topk]]
@@ -352,7 +362,7 @@ def analyse(rows, args):
     tag = f"_{args.tag}" if args.tag else ""
     Path(f"{DATA_DIR}/diag_detectability{tag}.json").write_text(json.dumps(dict(
         primary=args.primary, ensemble=args.ensemble, seeds=args.seeds, n_steps=args.n_steps,
-        n_decision_steps=len(step_keys),
+        solo_agent=args.solo_agent, n_decision_steps=len(step_keys),
         signals=out, gate_sim=gate, best=dict(name=best[0], within_spearman=best[1]),
         ma_specificity=ma_out, verdict=verdict), indent=2))
     with open(f"{DATA_DIR}/diag_detectability{tag}_rows.csv", "w", newline="") as f:
