@@ -301,15 +301,19 @@ def analyse(rows, args):
     print(f"  cov_agent (per-agent-mean)  within r(regret) = {ca.mean():+.3f}  95% CI [{ca_ci[0]:+.2f}, {ca_ci[1]:+.2f}]")
     print(f"  cov_joint (joint config)    within r(regret) = {cj.mean():+.3f}  95% CI [{cj_ci[0]:+.2f}, {cj_ci[1]:+.2f}]")
     print(f"  paired difference (joint - agent)          = {d_per_step.mean():+.3f}  95% CI [{d_ci[0]:+.2f}, {d_ci[1]:+.2f}]")
-    if d_ci[0] > 0.05:
-        ma_verdict = ("joint-configuration coverage predicts per-plan regret SUBSTANTIALLY better "
-                      "than per-agent coverage (CI excludes 0) -> concrete factored-structure result: "
-                      "the model's failure is about the joint config, not any agent in isolation.")
-    elif d_ci[1] < -0.05:
-        ma_verdict = "per-agent coverage is the better predictor -> the factored-structure framing is NOT supported."
+    if d_ci[0] > 0.0:
+        ma_verdict = ("joint-configuration coverage predicts per-plan regret better than per-agent "
+                      "coverage (paired-difference 95% CI excludes 0) -> concrete factored-structure "
+                      "result: the model's failure is about the joint config, not any agent in isolation. "
+                      f"(joint {cj.mean():+.2f} vs agent {ca.mean():+.2f}; both still below a gateable ~0.5)")
+    elif d_ci[1] < 0.0:
+        ma_verdict = ("per-agent-mean coverage predicts per-plan regret better than the joint config "
+                      "(paired-difference 95% CI excludes 0) -> the 'the joint structure is what the "
+                      "model gets wrong' framing is NOT supported on this axis.")
     else:
-        ma_verdict = ("joint and per-agent coverage predict regret about equally (difference CI spans 0). "
-                      "No isolable factored-structure effect on THIS axis; neither is gateable anyway.")
+        ma_verdict = ("joint and per-agent coverage predict regret about equally (paired-difference "
+                      "95% CI spans 0). No isolable factored-structure effect on this axis; neither is "
+                      "gateable anyway.")
     print(f"  >>> {ma_verdict}")
     ma_out = dict(cov_agent_r=float(ca.mean()), cov_agent_ci=list(ca_ci),
                   cov_joint_r=float(cj.mean()), cov_joint_ci=list(cj_ci),
