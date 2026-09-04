@@ -176,7 +176,31 @@ factored joint action space* — because the switching that matters is distribut
 across agents and no cheap per-plan scalar captures the joint pattern. Causal,
 not asserted.
 
-Pending: solo3, solo7 (robustness across the other 4-phase intersections).
+### All three 4-phase intersections (5 seeds, 125 steps each)
+
+`n_switch0` within-step Spearman with per-plan regret:
+
+| planner | `n_switch0` r(regret) | 95% CI | gateable? |
+|---|--:|--:|:--|
+| **full joint search** (#4-proper) | **+0.195** | [+0.15, +0.24] | no |
+| solo agent 0 | **+0.635** | [+0.49, +0.77] | **yes** |
+| solo agent 3 | +0.088 | [−0.23, +0.40] | no (noisy) |
+| solo agent 7 | **+0.411** | [+0.09, +0.68] | **yes** |
+
+**Honest read:** the effect is real but **not universal** — action structure
+becomes gateable in the solo regime for **2 of 3** intersections tested (agents 0
+and 7), never in the joint search. Agent 3's `n_switch0` is a noisy null (wide
+CI). Every other signal stays sub-gateable in every solo run, matching the joint
+search. The coverage joint−agent difference is also inconsistent across the three
+solo runs (−0.001, +0.019, +0.151) — no clean coverage story.
+
+**For the paper:** #4-proper is the headline (undetectability, tight CIs). The
+solo-agent control is a *supporting* isolation of the factored structure — report
+it as "in 2 of 3 intersections, the action-structure signal that gates
+single-agent planning fails to gate the factored joint search," not as a
+universal law. Strengthening options: more intersections / more seeds on the
+noisy one, or a synthetic single big-action-space agent.
+
 Artifacts: `results/diag_detectability_solo{0,3,7}.json`.
 
 ---
