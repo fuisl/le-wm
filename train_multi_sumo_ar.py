@@ -148,6 +148,9 @@ def main():
     p.add_argument("--permute_control", action="store_true")
     p.add_argument("--tag", default="L05ar")
     p.add_argument("--rollout_k", type=int, default=4)
+    p.add_argument("--history", type=int, default=3,
+                   help="predictor context window in control steps (T7 window-length test); "
+                        "saved in cfg['history'], set WM_HISTORY to match at eval time")
     p.add_argument("--neighbor_agg", default="mean", choices=["mean", "pna"])
     p.add_argument("--edge_dim", type=int, default=0, help="per-neighbour edge-feature width (0 = off)")
     p.add_argument("--epochs", type=int, default=80)
@@ -176,6 +179,8 @@ def main():
     ni = torch.from_numpy(np.asarray(meta["neighbor_idx"]))
     nm = torch.from_numpy(np.asarray(meta["neighbor_mask"]))
     K = args.rollout_k
+    global HISTORY
+    HISTORY = args.history
     window = HISTORY + K
     print(f"cologne8 N={n_nodes} F={node_F} A={node_A}  level={args.level} "
           f"permute={args.permute_control}  agg={args.neighbor_agg}  edge_dim={args.edge_dim}  rollout_k={K}  window={window}")

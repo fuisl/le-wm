@@ -160,12 +160,24 @@ def main():
     p.add_argument("--n_anchors", type=int, default=30)
     p.add_argument("--horizon", type=int, default=5)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--obs_mode", default=None, choices=[None, "base", "link", "raster", "full"],
+                   help="observation blocks (see sumo_multi_env.OBS_MODE); sets SUMO_OBS_MODE")
+    p.add_argument("--controllers", nargs="+", default=None,
+                   help="behaviour-controller cycle (default: CONTROLLERS). The original "
+                        "traffic_data_cologne8 corpus used: fixed_time random max_pressure")
     args = p.parse_args()
+    if args.controllers:
+        CONTROLLERS[:] = args.controllers
+    if args.obs_mode:
+        os.environ["SUMO_OBS_MODE"] = args.obs_mode
+        import traffic.sumo_multi_env as _sme
+        _sme.OBS_MODE = args.obs_mode
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     meta = make_env_meta(args.sumocfg, args.begin, args.warmup)
+    meta["obs_mode"] = os.environ.get("SUMO_OBS_MODE", "base")
     print(f"cologne8: N={meta['n_nodes']} F={meta['node_feature_dim']} "
           f"A={meta['node_action_dim']} green_phases={meta['n_green_phases']}")
     print(f"neighbor degrees: {meta['neighbor_mask'].sum(1).tolist()}")

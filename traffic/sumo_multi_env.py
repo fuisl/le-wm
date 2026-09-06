@@ -56,6 +56,20 @@ STEP_LENGTH = 5
 YELLOW_LENGTH = 3
 CLEARANCE_LENGTH = 2
 
+# Observation mode (2026-09-06 obs-sufficiency study). Read from the environment
+# so every diag / planner script picks it up without a CLI change:
+#   base   : F = 2*P_max + 1                       (phase halting, phase one-hot, elapsed)
+#   link   : base + 10   mean incoming / outgoing link state over graph neighbours
+#   raster : base + P_max*RASTER_CELLS*2  phase-aligned occupancy raster
+#            (per green phase, per 25 m cell from the stop line: vehicle count,
+#             mean speed / 13.9) over the lanes that phase serves, following
+#            the single upstream lane chain up to RASTER_CELLS*RASTER_CELL_M.
+#   full   : base + link + raster
+OBS_MODE = os.environ.get("SUMO_OBS_MODE", "base")
+RASTER_CELLS = 8
+RASTER_CELL_M = 25.0
+RASTER_VMAX = 13.9
+
 
 def _discover_green_phases(tl_id):
     """Green (non-yellow, not all-red) phases for a TL, in program order."""
@@ -76,8 +90,14 @@ class SumoMultiEnv:
 
     def __init__(self, sumocfg_path, begin=25200, seed=0, warmup=10,
                  step_length=STEP_LENGTH, metrics=False, tripinfo_dir="/tmp/claude-1000",
-                 hop_cap=999):
+                 hop_cap=999, obs_mode=None):
         self.hop_cap = hop_cap
+        self.obs_mode = obs_mode or OBS_MODE
+        assert self.obs_mode in ("base", "link", "raster", "full"), self.obs_mode
+        self.use_link = self.obs_mode in ("link", "full")
+        self.use_raster = self.obs_mode in ("raster", "full")
+        self._lane_chain = {}      # controlled lane -> [(lane_id, offset_m_to_stop_line)]
+        self._lane_len = {}
         self.sumocfg_path = os.path.abspath(sumocfg_path)
         self.scenario_dir = os.path.dirname(self.sumocfg_path)
         self.begin = begin
@@ -113,6 +133,7 @@ class SumoMultiEnv:
                 net_file = line.split('value="')[1].split('"')[0]
                 break
         net = sumolib.net.readNet(os.path.join(self.scenario_dir, net_file))
+        self._net = net
         tls_nodes = {}
         for tls in net.getTrafficLights():
             tid = tls.getID()
@@ -216,6 +237,8 @@ class SumoMultiEnv:
             self.elapsed[tid] = 0
             traci.trafficlight.setRedYellowGreenState(tid, gp[0])
         self.P_max = max(len(gp) for gp in self.green_phases.values())
+        if self.use_raster:
+            self._build_lane_chains()
 
         for _ in range(self.warmup):
             self.step(np.array([self.current_phase[t] for t in self.tl_ids]))
@@ -268,7 +291,23 @@ class SumoMultiEnv:
     # -- shapes ----------------------------------------------------------
 
     def node_feature_dim(self):
-        return 2 * self.P_max + 1
+        F = 2 * self.P_max + 1
+        if self.use_link:
+            F += self.EDGE_PAIR_DIM
+        if self.use_raster:
+            F += self.P_max * RASTER_CELLS * 2
+        return F
+
+    def obs_slices(self):
+        """Column layout of one node's feature vector: {block: (lo, hi)}."""
+        P = self.P_max
+        out = {"base": (0, 2 * P + 1)}
+        lo = 2 * P + 1
+        if self.use_link:
+            out["link"] = (lo, lo + self.EDGE_PAIR_DIM); lo += self.EDGE_PAIR_DIM
+        if self.use_raster:
+            out["raster"] = (lo, lo + P * RASTER_CELLS * 2); lo += P * RASTER_CELLS * 2
+        return out
 
     def node_action_dim(self):
         return self.P_max
@@ -342,6 +381,75 @@ class SumoMultiEnv:
             out[p] = tot
         return out
 
+    # -- rich observation blocks (obs_mode link / raster / full) -----------
+
+    def _build_lane_chains(self):
+        """For every controlled lane, the chain of lanes upstream of the stop
+        line (following the unique incoming lane while it exists and is not
+        itself controlled by another TL), with each lane's offset from the stop
+        line, until RASTER_CELLS*RASTER_CELL_M metres are covered."""
+        reach = RASTER_CELLS * RASTER_CELL_M
+        controlled_all = {l for t in self.tl_ids for l in self.controlled_lanes[t]}
+        self._lane_chain, self._lane_len = {}, {}
+        for tid in self.tl_ids:
+            for lane_id in set(self.controlled_lanes[tid]):
+                if lane_id in self._lane_chain:
+                    continue
+                chain, off, cur = [], 0.0, lane_id
+                seen = set()
+                while cur is not None and off < reach and cur not in seen:
+                    seen.add(cur)
+                    try:
+                        ln = self._net.getLane(cur)
+                    except KeyError:
+                        break
+                    L = float(ln.getLength())
+                    self._lane_len[cur] = L
+                    chain.append((cur, off))
+                    off += L
+                    inc = [l for l in ln.getIncoming() if l.getID() not in controlled_all]
+                    cur = inc[0].getID() if len(inc) == 1 else None
+                self._lane_chain[lane_id] = chain
+
+    def _raster_block(self):
+        """(N, P_max, RASTER_CELLS, 2): per phase, per cell from the stop line,
+        [vehicle count, mean speed / RASTER_VMAX] over the lanes the phase serves."""
+        N, P, C = self.n_nodes(), self.P_max, RASTER_CELLS
+        out = np.zeros((N, P, C, 2), dtype=np.float32)
+        veh_cache = {}   # lane_id -> list of (dist_from_lane_end, speed)
+
+        def lane_vehicles(lid):
+            if lid not in veh_cache:
+                L = self._lane_len.get(lid, traci.lane.getLength(lid))
+                rows = []
+                for v in traci.lane.getLastStepVehicleIDs(lid):
+                    rows.append((L - traci.vehicle.getLanePosition(v), traci.vehicle.getSpeed(v)))
+                veh_cache[lid] = rows
+            return veh_cache[lid]
+
+        for tid in self.tl_ids:
+            i = self._tl_index[tid]
+            lanes = self.controlled_lanes[tid]
+            for p, s in self.green_phases[tid].items():
+                served = {lane for k, lane in enumerate(lanes) if k < len(s) and s[k] in ("G", "g")}
+                cnt = np.zeros(C); spd = np.zeros(C)
+                for lane in served:
+                    for lid, off in self._lane_chain.get(lane, [(lane, 0.0)]):
+                        for d_end, v in lane_vehicles(lid):
+                            d = off + d_end
+                            c = int(d // RASTER_CELL_M)
+                            if 0 <= c < C:
+                                cnt[c] += 1; spd[c] += v
+                out[i, p, :, 0] = cnt
+                out[i, p, :, 1] = np.where(cnt > 0, spd / np.maximum(cnt, 1) / RASTER_VMAX, 0.0)
+        return out
+
+    def _link_block(self):
+        """(N, 10): mean over real graph neighbours of [incoming link (5), outgoing link (5)]."""
+        ef = self.edge_features()                                  # (N, deg, 10)
+        m = self._nbr_mask.astype(np.float32)[:, :, None]
+        return (ef * m).sum(1) / np.maximum(m.sum(1), 1.0)
+
     def node_features(self):
         N, F = self.n_nodes(), self.node_feature_dim()
         feat = np.zeros((N, F), dtype=np.float32)
@@ -350,6 +458,12 @@ class SumoMultiEnv:
             feat[i, : self.P_max] = self._phase_pressure(tid)
             feat[i, self.P_max + self.current_phase[tid]] = 1.0
             feat[i, 2 * self.P_max] = self.elapsed[tid] / 60.0
+        lo = 2 * self.P_max + 1
+        if self.use_link:
+            feat[:, lo: lo + self.EDGE_PAIR_DIM] = self._link_block(); lo += self.EDGE_PAIR_DIM
+        if self.use_raster:
+            R = self.P_max * RASTER_CELLS * 2
+            feat[:, lo: lo + R] = self._raster_block().reshape(N, R); lo += R
         return feat
 
     def state(self):

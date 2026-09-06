@@ -24,6 +24,7 @@ Usage:
 """
 
 import argparse
+import os
 import time
 
 import numpy as np
@@ -51,7 +52,7 @@ def _resolve_sumocfg():
 
 SUMOCFG = _resolve_sumocfg()
 DATA_DIR = "traffic_data_cologne8"
-HS = 3
+HS = int(os.environ.get("WM_HISTORY", 3))   # context window; set WM_HISTORY to match the checkpoint cfg["history"]
 
 
 def encode_context(model, state_hist, action_hist, n_nodes, ni, nm, device):
@@ -106,43 +107,134 @@ def cem_rollout(model, z_ctx, a_ctx, action_seqs, n_nodes, P_max, ni, nm, device
 
 
 class FactoredCEM:
-    def __init__(self, n_nodes, P_max, horizon, num_samples=64, topk=8, n_iters=4, rng=None):
+    """Factored categorical CEM over joint phase sequences.
+
+    Proposal-distribution options (2026-09-06, planning-fix study; all off by
+    default => the original uniform, memoryless search):
+      hold_prior  p : initial categorical puts mass p on each signal's CURRENT
+                      phase at every horizon step (V-JEPA-2-AC / PlaNet style
+                      "start from do-nothing"); the all-hold sequence is also
+                      injected as candidate 0 of iteration 0.
+      warm_start    : initial categorical = previous decision's fitted
+                      categorical shifted one step (TD-MPC2 style), averaged
+                      with the hold prior if both are on.
+      min_hold    k : each signal's phase is sampled in blocks of k steps
+                      (block-constant), AND a signal that has been green for
+                      fewer than k steps is forced to hold for the remainder
+                      -- a real minimum-green constraint at execution.
+      per_agent     : AMM-style per-intersection search: each signal optimises
+                      its own sequence with every other signal held at its
+                      current phase; the shared model still scores jointly.
+    """
+
+    def __init__(self, n_nodes, P_max, horizon, num_samples=64, topk=8, n_iters=4, rng=None,
+                 hold_prior=0.0, warm_start=False, min_hold=1, per_agent=False,
+                 n_valid=None, legal_only=False):
         self.N, self.P, self.H = n_nodes, P_max, horizon
         self.S, self.topk, self.iters = num_samples, topk, n_iters
         self.rng = rng or np.random.default_rng(0)
+        self.hold_prior, self.warm_start = float(hold_prior), bool(warm_start)
+        self.min_hold, self.per_agent = max(1, int(min_hold)), bool(per_agent)
+        # legal_only: signals with fewer than P_max green phases only ever get
+        # codes < n_valid[i]. Without it (the ORIGINAL behaviour) the search
+        # feeds the model action one-hots that never occur in training data
+        # (cologne8: 5 of 8 signals have 2 or 3 phases) -- SUMO silently clips
+        # them to the last legal phase, the model does not.
+        self.n_valid = None if n_valid is None else np.asarray(n_valid, dtype=int)
+        self.legal_only = bool(legal_only) and self.n_valid is not None
+        self.prev_probs = None
 
-    def plan(self, cost_fn):
-        probs = np.full((self.N, self.H, self.P), 1.0 / self.P)
-        for _ in range(self.iters):
-            phases = np.empty((self.S, self.N, self.H), dtype=np.int64)
+    def _mask(self, probs):
+        if self.legal_only:
             for i in range(self.N):
-                for h in range(self.H):
-                    phases[:, i, h] = self.rng.choice(self.P, size=self.S, p=probs[i, h])
-            cost = cost_fn(phases)                        # (S,)
-            elite = phases[np.argsort(cost)[: self.topk]]  # (topk,N,H)
-            for i in range(self.N):
-                for h in range(self.H):
-                    c = np.bincount(elite[:, i, h], minlength=self.P)
-                    probs[i, h] = (c + 1e-3) / (c.sum() + self.P * 1e-3)
-        return probs[:, 0].argmax(axis=1)   # (N,) phase per signal for the next step
+                probs[i, :, self.n_valid[i]:] = 0.0
+            probs = probs / probs.sum(-1, keepdims=True)
+        return probs
 
-    def plan_multi(self, cost_fn, act_steps):
-        """Same search; return argmax phases for the first `act_steps` horizon
-        steps as an (act_steps, N) array. act_steps=1 => plan-H / act-1 MPC."""
-        probs = np.full((self.N, self.H, self.P), 1.0 / self.P)
-        for _ in range(self.iters):
-            phases = np.empty((self.S, self.N, self.H), dtype=np.int64)
-            for i in range(self.N):
-                for h in range(self.H):
-                    phases[:, i, h] = self.rng.choice(self.P, size=self.S, p=probs[i, h])
+    # -- proposal distribution --------------------------------------------
+    def _init_probs(self, cur_phase):
+        N, H, P = self.N, self.H, self.P
+        probs = np.full((N, H, P), 1.0 / P)
+        used_prev = False
+        if self.warm_start and self.prev_probs is not None:
+            probs[:, :-1] = self.prev_probs[:, 1:]
+            probs[:, -1] = 1.0 / P
+            used_prev = True
+        if self.hold_prior > 0 and cur_phase is not None:
+            hp = np.full((N, H, P), (1.0 - self.hold_prior) / max(P - 1, 1))
+            hp[np.arange(N), :, cur_phase] = self.hold_prior
+            probs = 0.5 * (probs + hp) if used_prev else hp
+        return self._mask(probs)
+
+    def _sample(self, probs, cur_phase, elapsed):
+        S, N, H, P = self.S, self.N, self.H, self.P
+        phases = np.empty((S, N, H), dtype=np.int64)
+        for i in range(N):
+            h = 0
+            while h < H:
+                blk = min(self.min_hold, H - h)
+                phases[:, i, h:h + blk] = self.rng.choice(P, size=S, p=probs[i, h])[:, None]
+                h += blk
+        if self.min_hold > 1 and elapsed is not None and cur_phase is not None:
+            for i in range(N):
+                rem = int(self.min_hold - elapsed[i])
+                if rem > 0:
+                    phases[:, i, :min(rem, H)] = cur_phase[i]
+        return phases
+
+    def _refit(self, probs, elite, nodes=None):
+        for i in (range(self.N) if nodes is None else nodes):
+            for h in range(self.H):
+                c = np.bincount(elite[:, i, h], minlength=self.P)
+                probs[i, h] = (c + 1e-3) / (c.sum() + self.P * 1e-3)
+        return self._mask(probs)
+
+    # -- search -------------------------------------------------------------
+    def plan(self, cost_fn, cur_phase=None, elapsed=None):
+        return self.plan_multi(cost_fn, 1, cur_phase, elapsed)[0]
+
+    def plan_multi(self, cost_fn, act_steps, cur_phase=None, elapsed=None):
+        """Return argmax phases for the first `act_steps` horizon steps as an
+        (act_steps, N) array. act_steps=1 => plan-H / act-1 MPC."""
+        if self.per_agent:
+            return self._plan_per_agent(cost_fn, act_steps, cur_phase, elapsed)
+        probs = self._init_probs(cur_phase)
+        for it in range(self.iters):
+            phases = self._sample(probs, cur_phase, elapsed)
+            if it == 0 and self.hold_prior > 0 and cur_phase is not None:
+                phases[0] = np.asarray(cur_phase)[:, None]          # seeded all-hold candidate
             cost = cost_fn(phases)
             elite = phases[np.argsort(cost)[: self.topk]]
-            for i in range(self.N):
-                for h in range(self.H):
-                    c = np.bincount(elite[:, i, h], minlength=self.P)
-                    probs[i, h] = (c + 1e-3) / (c.sum() + self.P * 1e-3)
+            probs = self._refit(probs, elite)
+        self.prev_probs = probs
         k = max(1, min(act_steps, self.H))
-        return probs[:, :k].argmax(axis=2).T   # (k, N)
+        out = probs[:, :k].argmax(axis=2).T   # (k, N)
+        if self.min_hold > 1 and elapsed is not None and cur_phase is not None:
+            for i in range(self.N):
+                rem = int(self.min_hold - elapsed[i])
+                if rem > 0:
+                    out[:min(rem, k), i] = cur_phase[i]
+        return out
+
+    def _plan_per_agent(self, cost_fn, act_steps, cur_phase, elapsed):
+        assert cur_phase is not None, "per_agent search needs the current joint phase"
+        base = np.asarray(cur_phase)
+        probs = self._init_probs(cur_phase)
+        final = np.tile(base[:, None], (1, self.H))                # (N,H)
+        for i in range(self.N):
+            for it in range(self.iters):
+                smp = self._sample(probs, cur_phase, elapsed)      # (S,N,H)
+                phases = np.tile(base[None, :, None], (self.S, 1, self.H))
+                phases[:, i, :] = smp[:, i, :]
+                if it == 0 and self.hold_prior > 0:
+                    phases[0, i, :] = base[i]
+                cost = cost_fn(phases)
+                elite = phases[np.argsort(cost)[: self.topk]]
+                probs = self._refit(probs, elite, nodes=[i])
+            final[i] = probs[i].argmax(axis=1)
+        self.prev_probs = probs
+        k = max(1, min(act_steps, self.H))
+        return final[:, :k].T
 
 
 class OracleFactoredCEM(FactoredCEM):
@@ -150,7 +242,7 @@ class OracleFactoredCEM(FactoredCEM):
     SUMO env forward (save_state/load_state) - isolates model/probe error from
     the CEM logic + cost design, like plan_cem.py's OracleCEMPlanner."""
 
-    def plan_env(self, env, snap_path, act_steps):
+    def plan_env(self, env, snap_path, act_steps, cur_phase=None, elapsed=None):
         snap = env.save_state(snap_path)
         F, P = env.node_feature_dim(), env.P_max
 
@@ -165,21 +257,16 @@ class OracleFactoredCEM(FactoredCEM):
                 out[s] = tot
             return out
 
-        probs = np.full((self.N, self.H, self.P), 1.0 / self.P)
-        for _ in range(self.iters):
-            ph = np.empty((self.S, self.N, self.H), dtype=np.int64)
-            for i in range(self.N):
-                for h in range(self.H):
-                    ph[:, i, h] = self.rng.choice(self.P, size=self.S, p=probs[i, h])
-            cost = cost_fn(ph)
-            elite = ph[np.argsort(cost)[: self.topk]]
-            for i in range(self.N):
-                for h in range(self.H):
-                    c = np.bincount(elite[:, i, h], minlength=self.P)
-                    probs[i, h] = (c + 1e-3) / (c.sum() + self.P * 1e-3)
+        plan = self.plan_multi(cost_fn, act_steps, cur_phase, elapsed)
         env.load_state(snap)
-        k = max(1, min(act_steps, self.H))
-        return probs[:, :k].argmax(axis=2).T
+        return plan
+
+
+def env_phase_state(env):
+    """Current joint phase (N,) and steps-in-green (N,) for min-hold / hold-prior."""
+    cur = np.array([env.current_phase[t] for t in env.tl_ids])
+    el = np.array([env.elapsed[t] // env.step_length for t in env.tl_ids])
+    return cur, el
 
 
 def run_episode(env, n_compare, warmup, decision_fn):
@@ -192,11 +279,17 @@ def run_episode(env, n_compare, warmup, decision_fn):
         actions.append(env.encode_action(np.clip(ph, 0, env.P_max - 1)))
         states.append(env.step(ph))
     tail, wall, trace = 0.0, [], []
+    n_switch, n_sig = 0, 0
+    n_green = np.array([len(env.green_phases[x]) for x in env.tl_ids])
     for t in range(n_compare):
         t0 = time.time()
         ph = decision_fn(env, t, states, actions)
         wall.append(time.time() - t0)
-        actions.append(env.encode_action(np.clip(ph, 0, env.P_max - 1)))
+        ph = np.clip(np.asarray(ph), 0, env.P_max - 1)
+        cur = np.array([env.current_phase[x] for x in env.tl_ids])
+        eff = np.minimum(ph, n_green - 1)                 # what SUMO actually does with the code
+        n_switch += int((eff != cur).sum()); n_sig += len(cur)
+        actions.append(env.encode_action(ph))
         s = env.step(ph)
         env.metrics_tick()
         states.append(s)
@@ -205,6 +298,7 @@ def run_episode(env, n_compare, warmup, decision_fn):
         trace.append(step_halt)
     env.close()                       # flushes --tripinfo-output; parse AFTER this
     m = env.episode_metrics()
+    m["switch_rate"] = n_switch / max(n_sig, 1)
     return tail, (float(np.mean(wall)) if wall else 0.0), trace, m
 
 
@@ -224,7 +318,21 @@ def main():
     ap.add_argument("--oracle", action="store_true", help="add oracle-CEM (real-SUMO cost) - slow, 1 seed recommended")
     ap.add_argument("--dump_traces", action="store_true")
     ap.add_argument("--wandb", action="store_true", help="log RESCO metrics to wandb (offline if no creds)")
+    # planning-fix study (2026-09-06)
+    ap.add_argument("--hold_prior", type=float, default=0.0, help="CEM init mass on the current phase")
+    ap.add_argument("--warm_start", action="store_true", help="shift previous fitted categorical")
+    ap.add_argument("--min_hold", type=int, default=1, help="minimum green in control steps (block sampling + execution constraint)")
+    ap.add_argument("--per_agent", action="store_true", help="per-intersection search, others held")
+    ap.add_argument("--legal_only", action="store_true", help="mask CEM categoricals to each signal's legal phase codes")
+    ap.add_argument("--oracle_samples", type=int, default=24)
+    ap.add_argument("--oracle_iters", type=int, default=3)
+    ap.add_argument("--oracle_topk", type=int, default=6)
+    ap.add_argument("--tag", default=None, help="results/control_<tag>.json")
+    ap.add_argument("--data_dir", default=None, help="override DATA_DIR (obs-mode corpora)")
     args = ap.parse_args()
+    global DATA_DIR
+    if args.data_dir:
+        DATA_DIR = args.data_dir
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     meta = torch.load(f"{DATA_DIR}/val.pt", weights_only=False)
@@ -240,7 +348,10 @@ def main():
 
     def make_cem_decision(seed):
         cem = FactoredCEM(n_nodes, P_max, args.horizon, args.num_samples, args.topk,
-                          args.n_iters, rng=np.random.default_rng(seed))
+                          args.n_iters, rng=np.random.default_rng(seed),
+                          hold_prior=args.hold_prior, warm_start=args.warm_start,
+                          min_hold=args.min_hold, per_agent=args.per_agent,
+                          n_valid=meta.get("n_green_phases"), legal_only=args.legal_only)
         cache = {"queue": []}
 
         def decision(env, t, states, actions):
@@ -249,13 +360,14 @@ def main():
             sh = np.stack(states[-HS:]).astype(np.float32)
             ah = np.stack(actions[-HS:]).astype(np.float32)
             z_ctx, a_ctx = encode_context(model, sh, ah, n_nodes, ni, nm, device)
+            cur, el = env_phase_state(env)
 
             def cost_fn(phases):
                 pe = cem_rollout(model, z_ctx, a_ctx, phases, n_nodes, P_max, ni, nm, device)
                 dec = decode(pr, pe).clamp(min=0)    # (S,N,H,P)
                 return dec.sum(dim=(1, 2, 3)).cpu().numpy()
 
-            plan = cem.plan_multi(cost_fn, args.act_steps)   # (act_steps, N)
+            plan = cem.plan_multi(cost_fn, args.act_steps, cur, el)   # (act_steps, N)
             cache["queue"] = [plan[k] for k in range(1, len(plan))]
             return plan[0]
         return decision
@@ -285,13 +397,17 @@ def main():
                           group="closed-loop-control")
 
     def make_oracle_decision(seed):
-        oc = OracleFactoredCEM(n_nodes, P_max, args.horizon, 24, 6, 3,
-                               rng=np.random.default_rng(seed))
+        oc = OracleFactoredCEM(n_nodes, P_max, args.horizon, args.oracle_samples, args.oracle_topk,
+                               args.oracle_iters, rng=np.random.default_rng(seed),
+                               hold_prior=args.hold_prior, warm_start=args.warm_start,
+                               min_hold=args.min_hold, per_agent=False,
+                               n_valid=meta.get("n_green_phases"), legal_only=args.legal_only)
         cache = {"queue": []}
         def decision(env, t, states, actions):
             if cache["queue"]:
                 return cache["queue"].pop(0)
-            plan = oc.plan_env(env, "_oracle_multi_snap.xml", args.act_steps)
+            cur, el = env_phase_state(env)
+            plan = oc.plan_env(env, f"_oracle_multi_snap_{os.getpid()}.xml", args.act_steps, cur, el)
             cache["queue"] = [plan[k] for k in range(1, len(plan))]
             return plan[0]
         return decision
@@ -311,9 +427,9 @@ def main():
             env2 = SumoMultiEnv(SUMOCFG, seed=seed, warmup=0, metrics=True)
             tail, wall, tr, m = run_episode(env2, args.n_compare, args.warmup, dfn)  # closes env2 itself
             res[name], mres[name], traces[name] = tail, m, tr
-            print(f"  seed {seed:>4}  {name:>14}:  dur {m['duration']:7.1f}  delay {m['delay']:7.1f}  "
-                  f"wait {m['wait']:7.1f}  queue {m['queue']:6.1f}  thru {m['throughput']:>4}"
-                  + (f"   ({wall*1000:.0f} ms/dec)" if wall > 1e-4 else ""))
+            print(f"  seed {seed:>4}  {name:>14}:  tail {tail:6.0f}  dur {m['duration']:7.1f}  delay {m['delay']:7.1f}  "
+                  f"wait {m['wait']:7.1f}  queue {m['queue']:6.1f}  thru {m['throughput']:>4}  sw {m['switch_rate']:.2f}"
+                  + (f"   ({wall*1000:.0f} ms/dec)" if wall > 1e-4 else ""), flush=True)
             wb.log({f"{name}/duration": m["duration"], f"{name}/delay": m["delay"],
                     f"{name}/wait": m["wait"], f"{name}/queue": m["queue"],
                     f"{name}/throughput": m["throughput"], f"{name}/tail_halting": tail,
@@ -326,6 +442,17 @@ def main():
                        "metrics": mres},
                       open(f"{DATA_DIR}/control_traces.json", "w"))
             print(f"  wrote {DATA_DIR}/control_traces.json")
+
+    if args.tag:
+        import json
+        os.makedirs("results", exist_ok=True)
+        json.dump({"args": vars(args), "model": args.run, "tails": [(s, r) for s, r in rows],
+                   "metrics": [(s, m) for s, m in metric_rows],
+                   "mean_ratio_cem_mp": float(np.mean([r["latent-CEM"] / r["max_pressure"] for _, r in rows])),
+                   "mean_ratio_oracle_mp": (float(np.mean([r["oracle-CEM"] / r["max_pressure"] for _, r in rows]))
+                                            if "oracle-CEM" in rows[0][1] else None)},
+                  open(f"results/control_{args.tag}.json", "w"), indent=1)
+        print(f"  wrote results/control_{args.tag}.json")
 
     print("\n=== summary (tail cumulative halting, lower = better) ===")
     has_oracle = "oracle-CEM" in rows[0][1]

@@ -1,0 +1,270 @@
+{
+ "args": {
+  "run": "L05ar",
+  "weights": "weights_epoch_80.pt",
+  "seeds": [
+   777,
+   101,
+   202,
+   303,
+   404
+  ],
+  "n_compare": 40,
+  "warmup": 10,
+  "horizon": 5,
+  "act_steps": 1,
+  "num_samples": 64,
+  "topk": 8,
+  "n_iters": 4,
+  "fixed_cycle": 6,
+  "oracle": true,
+  "dump_traces": false,
+  "wandb": false,
+  "hold_prior": 0.7,
+  "warm_start": true,
+  "min_hold": 1,
+  "per_agent": false,
+  "oracle_samples": 24,
+  "oracle_iters": 3,
+  "oracle_topk": 6,
+  "tag": "pf_holdwarm_H5",
+  "data_dir": null
+ },
+ "model": "L05ar",
+ "tails": [
+  [
+   777,
+   {
+    "latent-CEM": 2092.0,
+    "max_pressure": 999.0,
+    "fixed_time": 3471.0,
+    "oracle-CEM": 787.0
+   }
+  ],
+  [
+   101,
+   {
+    "latent-CEM": 2297.0,
+    "max_pressure": 810.0,
+    "fixed_time": 3409.0,
+    "oracle-CEM": 788.0
+   }
+  ],
+  [
+   202,
+   {
+    "latent-CEM": 2583.0,
+    "max_pressure": 801.0,
+    "fixed_time": 3424.0,
+    "oracle-CEM": 764.0
+   }
+  ],
+  [
+   303,
+   {
+    "latent-CEM": 1797.0,
+    "max_pressure": 996.0,
+    "fixed_time": 3599.0,
+    "oracle-CEM": 728.0
+   }
+  ],
+  [
+   404,
+   {
+    "latent-CEM": 2371.0,
+    "max_pressure": 835.0,
+    "fixed_time": 3528.0,
+    "oracle-CEM": 515.0
+   }
+  ]
+ ],
+ "metrics": [
+  [
+   777,
+   {
+    "latent-CEM": {
+     "duration": 80.65040650406505,
+     "delay": 29.851300813008123,
+     "wait": 19.10569105691057,
+     "queue": 12.0,
+     "throughput": 123,
+     "switch_rate": 0.428125
+    },
+    "max_pressure": {
+     "duration": 73.73170731707317,
+     "delay": 20.206666666666663,
+     "wait": 8.975609756097562,
+     "queue": 5.725,
+     "throughput": 123,
+     "switch_rate": 0.209375
+    },
+    "fixed_time": {
+     "duration": 91.90243902439025,
+     "delay": 42.85536585365854,
+     "wait": 31.1869918699187,
+     "queue": 19.225,
+     "throughput": 123,
+     "switch_rate": 0.2
+    },
+    "oracle-CEM": {
+     "duration": 80.3150702801422,
+     "delay": 21.478069334376844,
+     "wait": 10.428986074421942,
+     "queue": 5.225,
+     "throughput": 30663,
+     "switch_rate": 0.26875
+    }
+   }
+  ],
+  [
+   101,
+   {
+    "latent-CEM": {
+     "duration": 82.39024390243902,
+     "delay": 32.1569918699187,
+     "wait": 19.926829268292682,
+     "queue": 12.7,
+     "throughput": 123,
+     "switch_rate": 0.584375
+    },
+    "max_pressure": {
+     "duration": 70.60975609756098,
+     "delay": 17.863983739837398,
+     "wait": 6.959349593495935,
+     "queue": 4.625,
+     "throughput": 123,
+     "switch_rate": 0.209375
+    },
+    "fixed_time": {
+     "duration": 90.5040650406504,
+     "delay": 42.4021138211382,
+     "wait": 30.78048780487805,
+     "queue": 19.075,
+     "throughput": 123,
+     "switch_rate": 0.196875
+    },
+    "oracle-CEM": {
+     "duration": 77.30679349614904,
+     "delay": 19.195723783819467,
+     "wait": 8.440820222500165,
+     "queue": 4.4,
+     "throughput": 30382,
+     "switch_rate": 0.253125
+    }
+   }
+  ],
+  [
+   202,
+   {
+    "latent-CEM": {
+     "duration": 83.63414634146342,
+     "delay": 34.23463414634146,
+     "wait": 22.357723577235774,
+     "queue": 14.125,
+     "throughput": 123,
+     "switch_rate": 0.446875
+    },
+    "max_pressure": {
+     "duration": 71.47967479674797,
+     "delay": 18.47544715447155,
+     "wait": 7.105691056910569,
+     "queue": 4.45,
+     "throughput": 123,
+     "switch_rate": 0.21875
+    },
+    "fixed_time": {
+     "duration": 90.42276422764228,
+     "delay": 41.83333333333334,
+     "wait": 30.650406504065042,
+     "queue": 19.075,
+     "throughput": 123,
+     "switch_rate": 0.2
+    },
+    "oracle-CEM": {
+     "duration": 77.82105579084269,
+     "delay": 19.56733484509952,
+     "wait": 8.504118451328909,
+     "queue": 4.1,
+     "throughput": 29987,
+     "switch_rate": 0.2625
+    }
+   }
+  ],
+  [
+   303,
+   {
+    "latent-CEM": {
+     "duration": 75.20325203252033,
+     "delay": 25.62146341463414,
+     "wait": 15.130081300813009,
+     "queue": 9.575,
+     "throughput": 123,
+     "switch_rate": 0.5375
+    },
+    "max_pressure": {
+     "duration": 72.52845528455285,
+     "delay": 20.350975609756095,
+     "wait": 9.1869918699187,
+     "queue": 5.75,
+     "throughput": 123,
+     "switch_rate": 0.225
+    },
+    "fixed_time": {
+     "duration": 91.44715447154472,
+     "delay": 43.81260162601624,
+     "wait": 32.48780487804878,
+     "queue": 20.025,
+     "throughput": 123,
+     "switch_rate": 0.2
+    },
+    "oracle-CEM": {
+     "duration": 76.0361096807415,
+     "delay": 18.48874613800199,
+     "wait": 8.407633882595263,
+     "queue": 4.025,
+     "throughput": 31072,
+     "switch_rate": 0.24375
+    }
+   }
+  ],
+  [
+   404,
+   {
+    "latent-CEM": {
+     "duration": 85.10569105691057,
+     "delay": 34.98056910569106,
+     "wait": 22.21951219512195,
+     "queue": 13.95,
+     "throughput": 123,
+     "switch_rate": 0.4875
+    },
+    "max_pressure": {
+     "duration": 70.3821138211382,
+     "delay": 17.859268292682923,
+     "wait": 7.162601626016261,
+     "queue": 4.575,
+     "throughput": 123,
+     "switch_rate": 0.203125
+    },
+    "fixed_time": {
+     "duration": 91.9430894308943,
+     "delay": 43.651300813008135,
+     "wait": 31.764227642276424,
+     "queue": 19.575,
+     "throughput": 123,
+     "switch_rate": 0.2
+    },
+    "oracle-CEM": {
+     "duration": 73.58334151530028,
+     "delay": 16.668142038946193,
+     "wait": 6.152577319587629,
+     "queue": 3.35,
+     "throughput": 30555,
+     "switch_rate": 0.23125
+    }
+   }
+  ]
+ ],
+ "mean_ratio_cem_mp": 2.5596706979814408,
+ "mean_ratio_oracle_mp": 0.8124250392260413
+}

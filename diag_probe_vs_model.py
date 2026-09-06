@@ -36,7 +36,7 @@ from visualize_rollout_cologne8 import fit_pressure_probe, decode
 from plan_cem_multi import encode_context, cem_rollout, SUMOCFG, HS
 from traffic.sumo_multi_env import SumoMultiEnv, controller_max_pressure
 
-DATA_DIR = "traffic_data_cologne8"
+DATA_DIR = os.environ.get("DATA_DIR", "traffic_data_cologne8")   # obs-mode corpora override
 
 
 def main():

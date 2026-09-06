@@ -17,6 +17,7 @@ dynamics latent cannot linearly decode anyway.
 Usage: python visualize_rollout_cologne8.py
 """
 
+import os
 import json
 from pathlib import Path
 
@@ -29,7 +30,7 @@ from traffic.dataset import TrafficDataset
 DATA_DIR = "traffic_data_cologne8"
 RUNS = {"L0": "L0", "L05": "L05", "L05perm": "L05perm"}
 WEIGHTS = "weights_epoch_80.pt"
-HISTORY = 3
+HISTORY = int(os.environ.get("WM_HISTORY", 3))   # follows the model under test
 EPISODE_IDX = 3          # val ep 3 = fixed_time (periodic -> real structure to predict)
 RIDGE_LAMBDA = 10.0
 
