@@ -51,6 +51,31 @@ def fit_pressure_probe(model, path, n_nodes, P, F, nbr_idx, nbr_mask, device):
     X, Y = torch.cat(X).double(), torch.cat(Y).double()
     ymu, ysd = Y.mean(0), Y.std(0).clamp(min=1e-6)
     Yz = (Y - ymu) / ysd
+    if os.environ.get("PROBE", "ridge") == "mlp":
+        # T5-lite (2026-09-06): non-linear post-hoc read-out. Same latents, same
+        # target; a 2-layer MLP instead of ridge. diag_probe_capacity.py shows the
+        # ridge probe loses most of the halting signal (val R2 0.85-0.94) while an
+        # MLP recovers it (0.999) on every model.
+        torch.manual_seed(0)
+        xmu, xsd = X.mean(0), X.std(0).clamp(min=1e-6)
+        net = torch.nn.Sequential(torch.nn.Linear(X.shape[1], 256), torch.nn.GELU(),
+                                  torch.nn.Linear(256, 256), torch.nn.GELU(),
+                                  torch.nn.Linear(256, P)).to(device)
+        opt = torch.optim.Adam(net.parameters(), lr=1e-3, weight_decay=1e-5)
+        Xt = ((X - xmu) / xsd).float().to(device); Yt = Yz.float().to(device)
+        n = len(Xt)
+        for _ in range(40):
+            perm = torch.randperm(n, device=device)
+            for i in range(0, n, 512):
+                idx = perm[i:i + 512]
+                loss = torch.nn.functional.mse_loss(net(Xt[idx]), Yt[idx])
+                opt.zero_grad(); loss.backward(); opt.step()
+        net.eval()
+        with torch.no_grad():
+            pred = net(Xt).cpu().double()
+        mse_phys = (((pred * ysd + ymu) - Y) ** 2).mean().item()
+        return {"net": net, "xmu": xmu.float(), "xsd": xsd.float(), "ymu": ymu.float(),
+                "ysd": ysd.float(), "mse": mse_phys, "kind": "mlp"}
     X1 = torch.cat([X, torch.ones(len(X), 1, dtype=torch.double)], 1)
     d = X1.shape[1]
     A = X1.T @ X1 + RIDGE_LAMBDA * torch.eye(d, dtype=torch.double)
@@ -61,6 +86,11 @@ def fit_pressure_probe(model, path, n_nodes, P, F, nbr_idx, nbr_mask, device):
 
 
 def decode(pr, emb):
+    if pr.get("kind") == "mlp":
+        dev = emb.device
+        with torch.no_grad():
+            z = pr["net"].to(dev)((emb - pr["xmu"].to(dev)) / pr["xsd"].to(dev))
+        return z * pr["ysd"].to(dev) + pr["ymu"].to(dev)
     ones = torch.ones(*emb.shape[:-1], 1, device=emb.device, dtype=emb.dtype)
     z = torch.cat([emb, ones], -1) @ pr["W"].to(emb.device)
     return z * pr["ysd"].to(emb.device) + pr["ymu"].to(emb.device)

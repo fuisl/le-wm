@@ -82,13 +82,87 @@ Read:
 
 Artifacts: `results/control_pf_*.json`, `results/planfix_summary.json`, `logs/pf_*.log`.
 
-## T2/T3 — richer observation world models  ⏳
+## T2/T3 — richer observation world models  ✅
 
-`L05ar_link` (F=19) and `L05ar_raster` (F=73): identical recipe to L05ar, observation is the
-only change (corpus, probe, closed-loop env all in the same mode). Diagnostics:
-probe-vs-model rank, compounding (5 seeds), plan-vs-beh, matched switching.
+`L05ar_link` (F=19, base + mean neighbour link state) and `L05ar_raster` (F=73, base +
+per-phase 25 m occupancy/speed raster to 200 m): identical recipe to L05ar — same episodes,
+same seeds, same 80 epochs — with the observation as the only change end to end (corpus,
+probe fit, closed-loop env).
 
-(pending)
+| model | F | ridge probe MSE | CEM/MP | CEM/rand | probe rank A | model rank B | eps plan/beh | matched plan / rand |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| L05ar (base) | 9 | 21.4 | 3.46 | 0.48 | 0.82 | 0.24 | 4.48 | 4.32 / 4.11 |
+| L05ar_ac_v1 (coverage post-train) | 9 | — | 2.10 | 0.29 | 0.79 | 0.35 | 2.91 | 2.99 / 2.74 |
+| **L05ar_link** | 19 | **7.4** | **2.36** | 0.32 | **0.90** | 0.25 | 3.17 | 3.35 / 3.17 |
+| **L05ar_raster** | 73 | **56.3** | **3.88** | 0.53 | **0.21** | 0.11 | 3.90 | 3.74 / 3.52 |
+
+Read:
+- **Link features help everywhere except plan ranking.** Probe MSE 21.4 → 7.4, probe-with-true-
+  dynamics rank 0.82 → 0.90, closed loop 3.46x → 2.36x (as good as coverage post-training
+  without any planner-matched data), regret drift flips negative. But the model's own plan
+  rank barely moves (0.24 → 0.25). Better observation, better model, same ranking failure.
+- **The raster model is worse on every planning metric** (3.88x, rank B 0.11) — and its *probe*
+  collapses too (rank A 0.21, MSE 56.3), even though its 1-step val loss is the best of the
+  three (tf 0.023 vs 0.047 for base). That is not an information problem: see the probe-
+  capacity test below.
+
+### Probe capacity — the read-out, not the latent (`diag_probe_capacity.py`)
+
+Same latents, same target (per-phase halting), ridge (as used by the planner) vs a 2-layer MLP,
+val MSE in vehicles² (target variance 1116):
+
+| model | ridge val MSE (R²) | MLP val MSE (R²) |
+|---|--:|--:|
+| L05ar | 62.2 (0.944) | **1.0 (0.999)** |
+| L05ar_link | 11.1 (0.990) | **1.5 (0.999)** |
+| L05ar_raster | 167.7 (0.850) | **1.9 (0.998)** |
+
+**The cost is fully present in every latent — including the raster model's — and the linear
+probe throws most of it away.** With a richer observation the latent stores halting less
+linearly (SIGReg shapes the latent isotropically, nothing ties the cost to a direction), so
+the *planner's* cost function degrades exactly when the observation improves. This is the
+value-equivalence point, measured: reward-free latents are not obliged to keep the control
+cost linearly accessible, and the post-hoc read-out is where richer observations are lost.
+
+Artifacts: `results/{compounding,probe_vs_model,plan_vs_beh,matched_switching}_L05ar_{link,raster}.json`,
+`results/diag_probe_capacity.json`.
+
+## T5-lite — non-linear read-out  ⏳ (base arm done)
+
+`PROBE=mlp` swaps the planner's ridge probe for the 2-layer MLP above (same fit data, same
+targets, no retraining of the world model). L05ar:
+
+| metric | ridge | MLP |
+|---|--:|--:|
+| probe rank A (true dynamics) | 0.82 | **0.998** |
+| probe top-1 A | 0.36 | **0.93** |
+| model rank B | 0.24 | 0.31 |
+| model top-1 B | 0.027 | 0.067 |
+| model abs. error | 104 | 128 |
+| **CEM/MP (5 seeds)** | 3.46 | **2.70** |
+| CEM/random | 0.48 | 0.37 |
+| regret model/random | 0.79 | 0.69 |
+| regret drift | +22 | **−16** |
+
+- Given true dynamics an accurate read-out picks the best candidate **93 %** of the time
+  (ridge: 36 %). Through the model: **6.7 %**. Almost all remaining *ranking* failure is the
+  latent rollout under planner actions.
+- Absolute error through the model *rises* (104 → 128): a sharper read-out amplifies predictor
+  error, because it is fitted on **encoder** latents and applied to **predictor** outputs.
+- **Closed-loop control nevertheless improves 3.46x → 2.70x** with the regret drift flipping
+  negative — comparable to what coverage post-training (2.10x) and the link observation (2.36x)
+  bought, for the price of a probe fit. Top-1 is a harsh metric on a 64-candidate population of
+  near-equivalent plans; a read-out that is right on average steers the closed loop better even
+  when it rarely nominates the single best plan.
+- → the cost read-out is a **first-class design axis**, and the cheapest intervention tested.
+
+Link and raster arms pending.
+
+## T7 — predictor context window  ⏳
+
+`L05ar_h6`, `L05ar_h12`: base observation, context 6 / 12 steps (30 / 60 s) instead of 3.
+
+(training)
 
 ## T7 — predictor context window  ⏳
 

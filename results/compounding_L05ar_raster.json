@@ -1,0 +1,24 @@
+{
+  "run": "L05ar_raster",
+  "seeds": [
+    777,
+    101,
+    202,
+    303,
+    404
+  ],
+  "n_steps": 40,
+  "mean_regret_model": 101.8875,
+  "mean_regret_random": 114.35458984375,
+  "model_over_random": 0.8909786667795707,
+  "regret_slope": 1.5588709677419337,
+  "regret_total_drift": 48.324999999999946,
+  "cov_slope": 0.017602773058798996,
+  "eps_slope": -0.00032512816078852165,
+  "spearman_cov_regret": 0.1884222409706683,
+  "spearman_eps_regret": 0.00927908376140549,
+  "tail_latent": 3442.2,
+  "tail_random": 6472.0,
+  "tail_mp": 888.2,
+  "verdict": "COMPOUNDING OPTIMISM BIAS: per-decision the model beats random, but regret and OOD-drift both grow over the closed loop and co-vary -> reframe from 'adversarial exploitation' to 'mild bias that compounds'"
+}

@@ -1,0 +1,22 @@
+{
+  "run": "L05ar_raster",
+  "seeds": [
+    777,
+    101,
+    202
+  ],
+  "n_steps": 25,
+  "n_plans": 4800,
+  "mean_errA": 120.46345050175985,
+  "mean_errB": 112.47894501368205,
+  "ratio_BA": 0.9337184394534577,
+  "model_contribution_frac": -0.07098666765683619,
+  "rank_A": 0.20930099651285491,
+  "rank_B": 0.10667026293036289,
+  "rank_B_valid_steps": 75,
+  "rank_B_total_steps": 75,
+  "horizon": 5,
+  "top1_A": 0.06666666666666667,
+  "top1_B": 0.0,
+  "verdict": "the model does NOT clearly destroy the ranking -> the control failure may be more about the probe / cost design than the world model"
+}
